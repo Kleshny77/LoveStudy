@@ -17,7 +17,9 @@ def get_help_text() -> str:
         "/focus — помодоро\n"
         "/deadlines — дедлайны\n"
         "/friends — друзья и рейтинг\n"
-        "/today — краткая сводка на сегодня"
+        "/today — краткая сводка на сегодня\n"
+        "/terms — условия подписки и оплаты\n"
+        "/paysupport — помощь по оплате"
     )
 
 
@@ -68,5 +70,39 @@ def get_deadline_notification_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [ib("⏰ К дедлайнам", callback_data=CB_MAIN_DEADLINES, style=BUTTON_PRIMARY)],
     ])
+
+
+def get_terms_text(price_stars: int, support_contact: str | None) -> str:
+    support_line = (
+        f"По вопросам оплаты и спорным ситуациям: {support_contact}"
+        if support_contact
+        else "По вопросам оплаты и спорным ситуациям используй команду /paysupport."
+    )
+    return em(
+        "📄 <b>Условия LoveStudy Pro</b>\n\n"
+        f"1. LoveStudy Pro стоит {price_stars} Stars за 30 дней.\n"
+        "2. Подписка оформляется внутри Telegram и может продлеваться автоматически.\n"
+        "3. Pro снимает лимит на генерацию тестов и дает безграничную генерацию, пока подписка активна.\n"
+        "4. Если автопродление отключено, доступ Pro сохраняется до конца уже оплаченного периода.\n"
+        "5. Возвраты и спорные случаи рассматриваются отдельно после обращения в поддержку.\n"
+        "6. Используя оплату, пользователь соглашается с этими условиями.\n\n"
+        f"{support_line}"
+    )
+
+
+def get_paysupport_text(support_contact: str | None) -> str:
+    contact_line = (
+        f"Связаться с поддержкой: {support_contact}"
+        if support_contact
+        else "Контакт поддержки не настроен. Добавь `PAY_SUPPORT_CONTACT` в `.env`, чтобы команда вела на нужный контакт."
+    )
+    return em(
+        "💳 <b>Поддержка по оплате</b>\n\n"
+        "Если есть проблема с оплатой, продлением или доступом к LoveStudy Pro, напиши в поддержку и приложи:\n"
+        "• свой Telegram username\n"
+        "• примерное время платежа\n"
+        "• описание проблемы\n\n"
+        f"{contact_line}"
+    )
 
 

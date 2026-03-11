@@ -20,6 +20,9 @@ class User(Base):
     quiz_wrong_answers   = Column(Integer, nullable=False, default=0)
     quiz_generations_today = Column(Integer, nullable=False, default=0)
     quiz_generations_date  = Column(Date, nullable=True)
+    subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
+    subscription_provider_charge_id = Column(String(255), nullable=True)
+    subscription_telegram_charge_id = Column(String(255), nullable=True)
 
 
 class TelegramUXSettings(Base):

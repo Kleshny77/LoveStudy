@@ -13,6 +13,9 @@ CB_MAIN_PROFILE   = "main:profile"
 # Профиль и статистика
 # ──────────────────────────────────────────────
 CB_PROF_ACHIEV      = "prof:ach"
+CB_PROF_SUBSCRIPTION = "prof:subscription"
+CB_PROF_SUB_BUY      = "prof:subscription:buy"
+CB_PROF_SUB_MANAGE   = "prof:subscription:manage"
 CB_PROF_STATS       = "prof:stats"
 CB_PROF_SUBJECTS    = "prof:subs"
 CB_PROF_SUBJECT     = "prof:sub:"     # prof:sub:<subject_id>

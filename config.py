@@ -47,3 +47,19 @@ def get_deepseek_api_key() -> str | None:
 def get_groq_api_key() -> str | None:
     """API-ключ Groq (Llama) для генерации викторин. Используется как fallback после DeepSeek."""
     return os.getenv("GROQ_API_KEY") or None
+
+
+def get_subscription_price_stars() -> int:
+    """Цена подписки LoveStudy Pro в Telegram Stars."""
+    raw = os.getenv("SUBSCRIPTION_PRICE_STARS", "199").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 199
+    return max(1, value)
+
+
+def get_payment_support_contact() -> str | None:
+    """Контакт для вопросов по оплате: @username, ссылка или email."""
+    value = (os.getenv("PAY_SUPPORT_CONTACT") or "").strip()
+    return value or None

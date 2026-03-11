@@ -13,6 +13,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from config import get_payment_support_contact, get_subscription_price_stars
 from db.repositories import (
     get_friends,
     get_friends_rating,
@@ -39,6 +40,8 @@ from services.telegram_setup import (
     get_group_redirect_keyboard,
     get_group_redirect_text,
     get_help_text,
+    get_paysupport_text,
+    get_terms_text,
     get_today_keyboard,
     get_today_text,
 )
@@ -65,6 +68,8 @@ async def configure_telegram_ui(app: Application) -> None:
         BotCommand("friends", "Друзья и рейтинг"),
         BotCommand("today", "Краткая сводка"),
         BotCommand("help", "Подсказка по командам"),
+        BotCommand("terms", "Условия подписки и оплаты"),
+        BotCommand("paysupport", "Помощь по оплате"),
     ]
 
     await app.bot.set_my_commands(default_commands)
@@ -240,6 +245,29 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_chat.send_message(get_help_text(), parse_mode=_HTML)
 
 
+async def cmd_terms(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_private(update):
+        await _redirect_to_private(update, context)
+        return
+    await update.effective_chat.send_message(
+        get_terms_text(
+            get_subscription_price_stars(),
+            get_payment_support_contact(),
+        ),
+        parse_mode=_HTML,
+    )
+
+
+async def cmd_paysupport(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_private(update):
+        await _redirect_to_private(update, context)
+        return
+    await update.effective_chat.send_message(
+        get_paysupport_text(get_payment_support_contact()),
+        parse_mode=_HTML,
+    )
+
+
 def register(app: Application) -> None:
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("materials", cmd_materials))
@@ -249,3 +277,5 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("friends", cmd_friends))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("terms", cmd_terms))
+    app.add_handler(CommandHandler("paysupport", cmd_paysupport))

@@ -4,6 +4,7 @@ from db.repositories import (
     MaterialsStats,
     ProfileOverview,
     StatisticsOverview,
+    SubscriptionStatus,
     SubjectProgressItem,
     get_learning_streak_days,
 )
@@ -18,6 +19,9 @@ from constants import (
     CB_PROF_MATERIALS,
     CB_PROF_PERIOD,
     CB_PROF_PERIOD_SET,
+    CB_PROF_SUBSCRIPTION,
+    CB_PROF_SUB_BUY,
+    CB_PROF_SUB_MANAGE,
     CB_PROF_STATS,
     CB_PROF_SUBJECT,
     CB_PROF_SUBJECTS,
@@ -48,9 +52,88 @@ def get_profile_hub_text(overview: ProfileOverview) -> str:
 
 def get_profile_hub_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [ib("⭐ Подписка Pro", callback_data=CB_PROF_SUBSCRIPTION, style=BUTTON_PRIMARY)],
         [ib("🏆 Мои достижения", callback_data=CB_PROF_ACHIEV)],
-        [ib("📊 Статистика", callback_data=CB_PROF_STATS, style=BUTTON_PRIMARY)],
+        [ib("📊 Статистика", callback_data=CB_PROF_STATS)],
         [ib("🔙 Назад", callback_data=CB_NAV_MAIN)],
+    ])
+
+
+def _format_subscription_expiry(expires_at) -> str:
+    if expires_at is None:
+        return "не активна"
+    local_dt = expires_at.astimezone()
+    return local_dt.strftime("%d.%m.%Y %H:%M")
+
+
+def get_subscription_text(status: SubscriptionStatus, price_stars: int) -> str:
+    if status.is_active:
+        status_line = (
+            "⭐ <b>LoveStudy Pro активна</b>\n\n"
+            f"Подписка действует до: {_format_subscription_expiry(status.expires_at)}\n"
+            "Лимит на генерацию тестов снят: у тебя безграничные тесты.\n\n"
+            "Продление и управление подпиской происходят через Telegram Stars."
+        )
+    else:
+        status_line = (
+            "⭐ <b>LoveStudy Pro</b>\n\n"
+            "Сейчас у тебя базовый тариф.\n"
+            "На нем доступно до 15 генераций тестов в день.\n\n"
+            "Что дает Pro:\n"
+            "• безлимитную генерацию тестов\n"
+            "• оплату прямо внутри Telegram через Stars\n"
+            "• автопродление подписки каждые 30 дней\n\n"
+            f"Стоимость: {price_stars} Stars в 30 дней."
+        )
+    return em(status_line)
+
+
+def get_subscription_keyboard(status: SubscriptionStatus) -> InlineKeyboardMarkup:
+    buy_label = "⭐ Продлить Pro" if status.is_active else "⭐ Оформить Pro"
+    return InlineKeyboardMarkup([
+        [ib(buy_label, callback_data=CB_PROF_SUB_BUY, style=BUTTON_PRIMARY)],
+        [ib("⚙️ Управление подпиской", callback_data=CB_PROF_SUB_MANAGE)],
+        [
+            ib("🔙 Назад", callback_data=CB_MAIN_PROFILE),
+            ib("🏠 Главное меню", callback_data=CB_NAV_MAIN),
+        ],
+    ])
+
+
+def get_subscription_checkout_keyboard(invoice_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [ib("⭐ Перейти к оплате", url=invoice_url, style=BUTTON_PRIMARY)],
+        [ib("⚙️ Управление подпиской", callback_data=CB_PROF_SUB_MANAGE)],
+        [
+            ib("🔙 Назад", callback_data=CB_PROF_SUBSCRIPTION),
+            ib("🏠 Главное меню", callback_data=CB_NAV_MAIN),
+        ],
+    ])
+
+
+def get_subscription_manage_text(status: SubscriptionStatus) -> str:
+    status_line = (
+        f"Сейчас подписка активна до {_format_subscription_expiry(status.expires_at)}."
+        if status.is_active
+        else "Сейчас активной подписки нет."
+    )
+    return em(
+        "⚙️ <b>Управление подпиской</b>\n\n"
+        f"{status_line}\n\n"
+        "Как отменить автопродление в Telegram:\n"
+        "1. Открой Telegram.\n"
+        "2. Перейди в Настройки.\n"
+        "3. Открой раздел Telegram Stars.\n"
+        "4. Найди активные подписки.\n"
+        "5. Выбери LoveStudy Pro и отключи автопродление.\n\n"
+        "После отмены доступ Pro сохранится до конца уже оплаченного периода."
+    )
+
+
+def get_subscription_manage_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [ib("🔙 К подписке Pro", callback_data=CB_PROF_SUBSCRIPTION)],
+        [ib("🏠 Главное меню", callback_data=CB_NAV_MAIN)],
     ])
 
 

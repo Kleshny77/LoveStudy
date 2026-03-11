@@ -114,6 +114,12 @@ class QuizGenerationStatus:
 
 
 @dataclass(slots=True)
+class SubscriptionStatus:
+    is_active: bool
+    expires_at: datetime | None
+
+
+@dataclass(slots=True)
 class TelegramUXSettingsData:
     study_chat_id: int | None
     study_chat_title: str | None
@@ -295,6 +301,16 @@ def _quiz_reset_at(now: datetime | None = None) -> datetime:
     return datetime.combine(tomorrow, time.min, tzinfo=tz)
 
 
+def has_active_subscription(user: User | None, now: datetime | None = None) -> bool:
+    if user is None or user.subscription_expires_at is None:
+        return False
+    current = now or datetime.now(timezone.utc)
+    expires_at = user.subscription_expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > current
+
+
 async def _get_or_create_quiz_user(session: AsyncSession, user_telegram_id: int) -> User:
     result = await session.execute(select(User).where(User.telegram_id == user_telegram_id))
     user = result.scalar_one_or_none()
@@ -313,6 +329,13 @@ async def get_quiz_generation_status(
     daily_limit: int = QUIZ_GENERATIONS_PER_DAY,
 ) -> QuizGenerationStatus:
     user = await _get_or_create_quiz_user(session, user_telegram_id)
+    if has_active_subscription(user):
+        return QuizGenerationStatus(
+            allowed=True,
+            used_today=int(user.quiz_generations_today or 0),
+            remaining_today=daily_limit,
+            next_reset_at=_quiz_reset_at(),
+        )
     today = date.today()
     used_today = int(user.quiz_generations_today or 0)
     if user.quiz_generations_date != today:
@@ -333,6 +356,13 @@ async def record_quiz_generation(
     daily_limit: int = QUIZ_GENERATIONS_PER_DAY,
 ) -> QuizGenerationStatus:
     user = await _get_or_create_quiz_user(session, user_telegram_id)
+    if has_active_subscription(user):
+        return QuizGenerationStatus(
+            allowed=True,
+            used_today=int(user.quiz_generations_today or 0),
+            remaining_today=daily_limit,
+            next_reset_at=_quiz_reset_at(),
+        )
     today = date.today()
     used_today = int(user.quiz_generations_today or 0)
     if user.quiz_generations_date != today:
@@ -350,6 +380,50 @@ async def record_quiz_generation(
         used_today=used_today,
         remaining_today=remaining_today,
         next_reset_at=_quiz_reset_at(),
+    )
+
+
+async def get_subscription_status(session: AsyncSession, user_telegram_id: int) -> SubscriptionStatus:
+    user = await _get_or_create_quiz_user(session, user_telegram_id)
+    expires_at = user.subscription_expires_at
+    return SubscriptionStatus(
+        is_active=has_active_subscription(user),
+        expires_at=expires_at,
+    )
+
+
+async def activate_subscription(
+    session: AsyncSession,
+    user_telegram_id: int,
+    *,
+    duration_days: int = 30,
+    expires_at: datetime | None = None,
+    provider_charge_id: str | None = None,
+    telegram_charge_id: str | None = None,
+) -> SubscriptionStatus:
+    user = await _get_or_create_quiz_user(session, user_telegram_id)
+    now = datetime.now(timezone.utc)
+    normalized_expires_at = expires_at
+    if normalized_expires_at is not None and normalized_expires_at.tzinfo is None:
+        normalized_expires_at = normalized_expires_at.replace(tzinfo=timezone.utc)
+
+    if normalized_expires_at is not None:
+        user.subscription_expires_at = normalized_expires_at
+    else:
+        current_expires_at = user.subscription_expires_at
+        if current_expires_at is not None and current_expires_at.tzinfo is None:
+            current_expires_at = current_expires_at.replace(tzinfo=timezone.utc)
+        base_time = current_expires_at if current_expires_at and current_expires_at > now else now
+        user.subscription_expires_at = base_time + timedelta(days=duration_days)
+    if provider_charge_id:
+        user.subscription_provider_charge_id = provider_charge_id
+    if telegram_charge_id:
+        user.subscription_telegram_charge_id = telegram_charge_id
+
+    await session.commit()
+    return SubscriptionStatus(
+        is_active=True,
+        expires_at=user.subscription_expires_at,
     )
 
 

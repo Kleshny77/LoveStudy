@@ -64,6 +64,6 @@ def run_polling() -> None:
     app = create_app()
     logger.info("Бот LoveStudy запущен (polling). Остановка: Ctrl+C")
     app.run_polling(
-        allowed_updates=["message", "callback_query", "poll_answer"],
+        allowed_updates=["message", "callback_query", "poll_answer", "pre_checkout_query"],
         # drop_pending_updates=False (по умолчанию) — нужно для debounce /start
     )
