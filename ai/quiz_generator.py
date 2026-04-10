@@ -17,6 +17,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Cloudflare часто режет python-httpx / Python-urllib на датацентровых IP.
+_GEMINI_PROXY_HEADERS_EXTRA = {
+    "User-Agent": "Mozilla/5.0 (compatible; LoveStudy/1.0; +https://github.com/Kleshny77/LoveStudy)",
+    "Accept": "application/json",
+}
+
 # Лимиты Telegram для quiz
 MAX_QUESTION_LEN = 300
 MAX_OPTION_LEN = 72
@@ -221,26 +227,38 @@ def _call_gemini_proxy(
     num_questions: int = 3,
     exclude_questions: list[str] | None = None,
 ) -> str:
-    """Генерация викторины через Gemini-compatible endpoint."""
+    """Генерация викторины через Gemini-compatible endpoint (OpenAI-style /chat/completions).
+
+    Часть прокси (в т.ч. под Gemini) не принимает role=system — шлём один user с инструкцией и контентом.
+    """
     try:
         user_msg = f"Создай ровно {num_questions} вопросов по следующему контенту.\n\n{content_text[:110000]}"
+        instructions = _build_quiz_prompt(num_questions, exclude_questions)
+        combined_user = f"{instructions}\n\n{user_msg}"
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": combined_user}],
+            "temperature": 0.4,
+            "max_tokens": 4096,
+        }
         response = httpx.post(
-            f"{base_url.rstrip('/')}/chat/completions",
+            url,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                **_GEMINI_PROXY_HEADERS_EXTRA,
             },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": _build_quiz_prompt(num_questions, exclude_questions)},
-                    {"role": "user", "content": user_msg},
-                ],
-                "temperature": 0.4,
-                "max_tokens": 4096,
-            },
-            timeout=60.0,
+            json=payload,
+            timeout=120.0,
         )
+        if response.status_code >= 400:
+            snippet = (response.text or "")[:1500].replace("\n", " ")
+            logger.warning(
+                "Gemini proxy HTTP %s: %s",
+                response.status_code,
+                snippet or "(пустое тело)",
+            )
         response.raise_for_status()
         data = response.json()
         text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
@@ -362,7 +380,7 @@ def generate_quiz_from_text(
     *,
     gemini_proxy_key: str | None = None,
     gemini_proxy_base_url: str | None = None,
-    gemini_proxy_model: str = "gemini-3.1-flash-lite-preview",
+    gemini_proxy_model: str = "gemini-2.0-flash",
     deepseek_key: str | None = None,
     groq_key: str | None = None,
     gemini_key: str | None = None,
@@ -426,7 +444,7 @@ def generate_quiz(
     *,
     gemini_proxy_key: str | None = None,
     gemini_proxy_base_url: str | None = None,
-    gemini_proxy_model: str = "gemini-3.1-flash-lite-preview",
+    gemini_proxy_model: str = "gemini-2.0-flash",
     deepseek_key: str | None = None,
     groq_key: str | None = None,
     gemini_key: str | None = None,

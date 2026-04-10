@@ -81,6 +81,8 @@ def main() -> int:
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; LoveStudy/1.0; +https://github.com/Kleshny77/LoveStudy)",
+            "Accept": "application/json",
         },
     )
     try:
