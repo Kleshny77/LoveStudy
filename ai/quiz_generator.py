@@ -9,7 +9,6 @@ from __future__ import annotations
 import io
 import json
 import logging
-import random
 import re
 from dataclasses import dataclass
 
@@ -23,12 +22,15 @@ _GEMINI_PROXY_HEADERS_EXTRA = {
     "Accept": "application/json",
 }
 
-# Лимиты Telegram для quiz
+# Лимиты Telegram для quiz (до 12 вариантов с Bot API 9.1+)
 MAX_QUESTION_LEN = 300
 MAX_OPTION_LEN = 72
-MAX_OPTIONS = 5
+MAX_OPTIONS = 10
 MIN_OPTIONS = 3
 MAX_EXPLANATION_LEN = 200
+# Несколько верных ответов (quiz + allows_multiple_answers, Bot API 9.6+)
+MIN_MULTI_CORRECT = 2
+MAX_MULTI_CORRECT = 3
 
 
 @dataclass(slots=True)
@@ -37,6 +39,8 @@ class QuizQuestion:
     options: list[str]
     correct_index: int
     explanation: str
+    """Индексы всех верных вариантов (0-based), по порядку options. Один — обычный тест, несколько — «выбери все верные»."""
+    correct_indices: tuple[int, ...] = ()
 
 
 def _truncate(s: str, limit: int) -> str:
@@ -153,25 +157,40 @@ _QUIZ_SYSTEM = """Ты — эксперт по созданию образова
 1. Все варианты ответов ПРАВДОПОДОБНЫ и связаны с темой. Запрещены очевидно неверные (типа "банан" на вопрос про код).
 2. Неправильные ответы — такие, что человек мог бы выбрать по недопониманию: похожие термины, частично верные утверждения, типичные ошибки.
 3. Вопросы проверяют понимание ключевых идей, не тривиальные факты.
-4. Объяснение — кратко (до 200 символов), почему правильный ответ верен. На русском.
+4. Объяснение — кратко (до 200 символов), почему верны выбранные ответы. На русском.
 5. Варианты ответов формулируй коротко и ясно, желательно до 72 символов каждый.
+
+ТИПЫ ВОПРОСОВ (обязательно чередуй):
+- Один верный: поле "correct_index" (0-based), 4–6 вариантов.
+- Несколько верных: поле "correct_indices" — массив из 2–3 индексов, 5–8 вариантов. В тексте вопроса явно напиши, что нужно выбрать ВСЕ верные (например: «Отметь все верные утверждения»).
 
 Верни ТОЛЬКО валидный JSON без markdown-обёртки:
 {
   "questions": [
     {
-      "question": "текст вопроса",
-      "options": ["вариант A", "вариант B", "вариант C", "вариант D"],
+      "question": "текст вопроса с одним верным ответом",
+      "options": ["A", "B", "C", "D"],
       "correct_index": 0,
-      "explanation": "краткое объяснение"
+      "explanation": "почему верно"
+    },
+    {
+      "question": "Отметь все верные утверждения о …",
+      "options": ["утверждение 1", "утверждение 2", "утверждение 3", "утверждение 4", "утверждение 5"],
+      "correct_indices": [0, 2],
+      "explanation": "почему эти верны, остальные нет"
     }
   ]
 }
-Вариантов: 3–5. correct_index — индекс правильного (0-based)."""
+Для вопроса либо "correct_index", либо "correct_indices" (не оба). Если делаешь набор из N вопросов — включи хотя бы один с "correct_indices"."""
 
 
 def _build_quiz_prompt(num_questions: int, exclude_questions: list[str] | None = None) -> str:
     prompt = f"{_QUIZ_SYSTEM}\n\nСоздай ровно {num_questions} вопросов."
+    if num_questions >= 2:
+        prompt += (
+            f" Из них минимум один — с полем correct_indices (2–{MAX_MULTI_CORRECT} верных), "
+            "остальные — с correct_index."
+        )
     if exclude_questions:
         limited = [q.strip() for q in exclude_questions if q.strip()][:20]
         if limited:
@@ -332,18 +351,32 @@ def _call_gemini(
         return "{}"
 
 
+def _parse_int_list(raw: object) -> list[int]:
+    out: list[int] = []
+    if not isinstance(raw, list):
+        return out
+    for x in raw:
+        try:
+            if isinstance(x, bool):
+                continue
+            if isinstance(x, int):
+                out.append(x)
+            elif isinstance(x, float) and x == int(x):
+                out.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _parse_quiz_json(raw: str, exclude_questions: list[str] | None = None) -> list[QuizQuestion]:
     questions: list[QuizQuestion] = []
     seen_questions = {_normalize_question_text(question) for question in (exclude_questions or []) if question}
     try:
         data = json.loads(raw)
         for q in data.get("questions", [])[:10]:
-            opts = list(q.get("options") or [])
+            opts = [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
             if len(opts) < MIN_OPTIONS or len(opts) > MAX_OPTIONS:
                 continue
-            idx = int(q.get("correct_index", 0))
-            if idx < 0 or idx >= len(opts):
-                idx = 0
             expl = (q.get("explanation") or "").strip()
             quest = (q.get("question") or "").strip()
             if not quest:
@@ -351,19 +384,39 @@ def _parse_quiz_json(raw: str, exclude_questions: list[str] | None = None) -> li
             normalized_question = _normalize_question_text(quest)
             if not normalized_question or normalized_question in seen_questions:
                 continue
-            indexed_options = list(enumerate(opts))
-            random.shuffle(indexed_options)
-            shuffled_options = [option for _, option in indexed_options]
-            shuffled_correct_index = next(
-                (new_idx for new_idx, (old_idx, _) in enumerate(indexed_options) if old_idx == idx),
-                0,
-            )
+
+            raw_multi = q.get("correct_indices")
+            indices: list[int] = []
+            if raw_multi is not None and raw_multi != []:
+                cand = sorted(set(_parse_int_list(raw_multi)))
+                indices = [i for i in cand if 0 <= i < len(opts)]
+                if len(indices) < MIN_MULTI_CORRECT:
+                    indices = []
+                if len(indices) > MAX_MULTI_CORRECT:
+                    indices = indices[:MAX_MULTI_CORRECT]
+                if len(indices) >= len(opts):
+                    indices = []
+                if len(indices) < MIN_MULTI_CORRECT:
+                    indices = []
+
+            if not indices:
+                idx = int(q.get("correct_index", 0))
+                if idx < 0 or idx >= len(opts):
+                    idx = 0
+                indices = [idx]
+
+            if len(set(indices)) != len(indices):
+                continue
+
+            ci_tuple = tuple(indices)
+            primary = indices[0]
             questions.append(
                 QuizQuestion(
                     question=_truncate(quest, MAX_QUESTION_LEN),
-                    options=[_truncate(o, MAX_OPTION_LEN) for o in shuffled_options],
-                    correct_index=shuffled_correct_index,
+                    options=[_truncate(o, MAX_OPTION_LEN) for o in opts],
+                    correct_index=primary,
                     explanation=_truncate(expl, MAX_EXPLANATION_LEN),
+                    correct_indices=ci_tuple,
                 )
             )
             seen_questions.add(normalized_question)

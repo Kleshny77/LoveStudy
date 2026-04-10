@@ -1,4 +1,4 @@
-python-telegram-bot[job-queue]>=21.0
+python-telegram-bot[job-queue]>=22.0
 python-dotenv>=1.0.0
 # БД: для PostgreSQL в Yandex Cloud (Managed Service)
 sqlalchemy[asyncio]>=2.0

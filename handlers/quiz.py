@@ -53,6 +53,27 @@ from db.repositories import (
 from services.ui import em, ib
 logger = logging.getLogger(__name__)
 
+# Poll description (Bot API 9.6+), лимит осторожный
+_POLL_DESCRIPTION_MAX_LEN = 255
+
+# Параметры опросов Bot API 9.6+: порядок вариантов у каждого свой, без смены голоса (проще учёт).
+_POLL_API_EXTRA = {
+    "shuffle_options": True,
+    "allows_revoting": False,
+}
+
+
+def _poll_description(title: str) -> str | None:
+    base = "LoveStudy — проверка по твоим материалам."
+    if title and title.strip():
+        text = f"{base}\n{title.strip()}"
+    else:
+        text = base
+    if len(text) > _POLL_DESCRIPTION_MAX_LEN:
+        return text[: _POLL_DESCRIPTION_MAX_LEN - 1].rstrip() + "…"
+    return text
+
+
 # Храним poll_id -> данные конкретного poll и session_id.
 _QUIZ_POLLS_KEY = "quiz_polls"
 _QUIZ_SESSIONS_KEY = "quiz_sessions"
@@ -202,7 +223,7 @@ async def _run_quiz_generation(
     *,
     gemini_proxy_key: str | None = None,
     gemini_proxy_base_url: str | None = None,
-    gemini_proxy_model: str = "gemini-3.1-flash-lite-preview",
+    gemini_proxy_model: str = "gemini-2.0-flash",
     deepseek_key: str | None = None,
     groq_key: str | None = None,
     gemini_key: str | None = None,
@@ -251,21 +272,41 @@ async def _send_quiz_polls(
     }
     sent_polls = 0
     sent_question_texts: list[str] = []
+    desc = _poll_description(title)
     for q in questions:
         try:
-            msg = await context.bot.send_poll(
-                chat_id=chat_id,
-                question=q.question,
-                options=q.options,
-                type=PollType.QUIZ,
-                is_anonymous=False,
-                correct_option_id=q.correct_index,
-                explanation=q.explanation or None,
-            )
+            cis = tuple(q.correct_indices) if q.correct_indices else (q.correct_index,)
+            api_kw: dict[str, Any] = dict(_POLL_API_EXTRA)
+            if desc:
+                api_kw["description"] = desc
+            if len(cis) > 1:
+                api_kw["correct_option_ids"] = list(cis)
+                msg = await context.bot.send_poll(
+                    chat_id=chat_id,
+                    question=q.question,
+                    options=q.options,
+                    type=PollType.QUIZ,
+                    is_anonymous=False,
+                    allows_multiple_answers=True,
+                    explanation=q.explanation or None,
+                    api_kwargs=api_kw,
+                )
+            else:
+                msg = await context.bot.send_poll(
+                    chat_id=chat_id,
+                    question=q.question,
+                    options=q.options,
+                    type=PollType.QUIZ,
+                    is_anonymous=False,
+                    allows_multiple_answers=False,
+                    correct_option_id=cis[0],
+                    explanation=q.explanation or None,
+                    api_kwargs=api_kw,
+                )
             if msg.poll:
                 polls[msg.poll.id] = {
                     "session_id": session_id,
-                    "correct_index": q.correct_index,
+                    "correct_indices": list(cis),
                 }
                 sent_polls += 1
                 sent_question_texts.append(q.question)
@@ -555,16 +596,24 @@ async def on_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     session_id = meta.get("session_id")
-    correct_index = meta.get("correct_index", -1)
+    correct_indices = meta.get("correct_indices")
+    if correct_indices is None and "correct_index" in meta:
+        ci = meta.get("correct_index")
+        correct_indices = [ci] if isinstance(ci, int) and ci >= 0 else []
+    if not isinstance(correct_indices, list):
+        correct_indices = []
     option_ids = answer.option_ids or []
     sessions = _get_quiz_sessions(context)
     session_meta = sessions.get(session_id) if session_id else None
 
-    if not option_ids or session_meta is None:
+    if session_meta is None:
+        return
+    # Пустой выбор (снял голос) — не меняем счётчик
+    if not option_ids:
         return
 
-    # option_ids — индексы выбранных вариантов (для quiz — один)
-    is_correct = option_ids[0] == correct_index if option_ids else False
+    need = set(correct_indices)
+    is_correct = set(option_ids) == need and len(need) > 0
     session_meta["answered_questions"] += 1
     if is_correct:
         session_meta["correct_answers"] += 1
