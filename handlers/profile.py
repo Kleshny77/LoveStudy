@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 from config import get_subscription_price_stars
+from services.analytics import EV_SUBSCRIPTION_PAID, schedule_track
 from constants import (
     CB_MAIN_PROFILE,
     CB_PROF_ACHIEV,
@@ -188,6 +189,15 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
             telegram_charge_id=payment.telegram_payment_charge_id,
         )
 
+    schedule_track(
+        context,
+        update.effective_user.id,
+        EV_SUBSCRIPTION_PAID,
+        {
+            "total_amount": payment.total_amount,
+            "currency": payment.currency,
+        },
+    )
     price_stars = get_subscription_price_stars()
     await message.reply_text(
         get_subscription_text(status, price_stars),

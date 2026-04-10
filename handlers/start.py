@@ -15,6 +15,7 @@ from services.friends import (
     get_new_friend_keyboard,
     get_new_friend_text,
 )
+from services.analytics import EV_MAIN_MENU_SHOWN, schedule_track
 from services.main_menu import get_main_menu_keyboard, get_main_menu_text
 
 logger = logging.getLogger(__name__)
@@ -75,15 +76,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # ── Стрик будет считаться по тестам, а не по /start.
     #    Сбрасываем старое legacy-значение daily-visit, если оно осталось в БД.
-    if "session_factory" in context.bot_data:
-        async with context.bot_data["session_factory"]() as session:
-            await get_or_create_user(
-                session,
-                telegram_id=uid,
-                username=username,
-                first_name=name,
-            )
-            await reset_user_streak(session, uid)
+    factory = context.bot_data.get("session_factory")
+    if factory:
+        try:
+            async with factory() as session:
+                await get_or_create_user(
+                    session,
+                    telegram_id=uid,
+                    username=username,
+                    first_name=name,
+                )
+                await reset_user_streak(session, uid)
+        except Exception:
+            logger.exception("Ошибка при get_or_create_user/reset_streak (uid=%s)", uid)
 
     # Отменяем предыдущую ожидающую задачу для этого чата
     old_task = _pending.pop(chat_id, None)
@@ -99,6 +104,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await _process_invite(context, inviter_id, uid)
 
             # Главное меню
+            schedule_track(
+                context,
+                uid,
+                EV_MAIN_MENU_SHOWN,
+                {"from_invite": inviter_id is not None},
+            )
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=get_main_menu_text(name),

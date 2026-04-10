@@ -12,7 +12,7 @@ def get_subjects_screen_text() -> str:
 
 def get_subjects_screen_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [ib("📤 Загрузить материалы", callback_data=CB_MAIN_UPLOAD, style=BUTTON_PRIMARY)],
+        [ib("📤 Загрузить материалы", callback_data=CB_MAIN_UPLOAD, style=BUTTON_PRIMARY, skip_custom_emoji=True)],
         [
             ib("🔙 Назад", callback_data=CB_NAV_HUB),
             ib("🏠 Главное меню", callback_data=CB_NAV_MAIN),

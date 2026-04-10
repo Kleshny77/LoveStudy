@@ -51,6 +51,7 @@ from db.repositories import (
     save_file_to_new_subject,
     save_file_to_subject,
 )
+from services.analytics import EV_MATERIAL_SAVED, schedule_track
 from services.main_menu import get_main_menu_keyboard, get_main_menu_text
 from services.material_upload import (
     get_db_error_text,
@@ -206,6 +207,12 @@ async def _save_to_target_subject(
         await update.message.reply_text(get_db_error_text(), reply_markup=get_done_keyboard(), parse_mode="HTML")
         return ConversationHandler.END
 
+    schedule_track(
+        context,
+        uid,
+        EV_MATERIAL_SAVED,
+        {"new_subject": False, "subject_id": subject_id},
+    )
     await update.message.reply_text(
         get_add_done_text(file_label, subject_name),
         reply_markup=get_add_done_keyboard(subject_id),
@@ -366,6 +373,12 @@ async def on_folder_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text(get_db_error_text(), reply_markup=get_done_keyboard(), parse_mode="HTML")
         return ConversationHandler.END
 
+    schedule_track(
+        context,
+        uid,
+        EV_MATERIAL_SAVED,
+        {"new_subject": False, "subject_id": saved_subject_id},
+    )
     await query.edit_message_text(
         get_done_text(folder_name, is_new_folder=False),
         reply_markup=get_done_keyboard(subject_id=saved_subject_id),
@@ -427,6 +440,12 @@ async def on_folder_name_entered(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(get_db_error_text(), reply_markup=get_done_keyboard(), parse_mode="HTML")
         return ConversationHandler.END
 
+    schedule_track(
+        context,
+        uid,
+        EV_MATERIAL_SAVED,
+        {"new_subject": True, "subject_id": saved_subject_id},
+    )
     await update.message.reply_text(
         get_done_text(folder_name, is_new_folder=True),
         reply_markup=get_done_keyboard(subject_id=saved_subject_id),
@@ -508,6 +527,7 @@ def register(app: Application) -> None:
             ],
         },
         fallbacks=[
+            CallbackQueryHandler(enter_instructions, pattern=rf"^({CB_MAIN_UPLOAD}|{CB_MAT_MORE})$"),
             CallbackQueryHandler(fallback_cancel, pattern=rf"^{CB_MAT_CANCEL}$"),
             CallbackQueryHandler(fallback_to_main, pattern=rf"^{CB_MAT_TO_MAIN}$"),
             CommandHandler("start", fallback_start),

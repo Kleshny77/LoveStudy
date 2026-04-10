@@ -98,8 +98,13 @@ def ib(
     copy_text: CopyTextButton | None = None,
     style: str | None = None,
     icon_key: str | None = None,
+    skip_custom_emoji: bool = False,
 ) -> InlineKeyboardButton:
-    button_text, emoji_id = _extract_button_icon(text, icon_key)
+    """Создаёт InlineKeyboardButton. skip_custom_emoji=True — без icon_custom_emoji_id (для совместимости)."""
+    if skip_custom_emoji:
+        button_text, emoji_id = text, None
+    else:
+        button_text, emoji_id = _extract_button_icon(text, icon_key)
 
     api_kwargs: dict[str, str] = {}
     if style == BUTTON_PRIMARY and not _is_primary_navigation(button_text):

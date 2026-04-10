@@ -92,6 +92,7 @@ from db.repositories import (
     get_upcoming_deadlines,
 )
 from db.models import Deadline, User
+from services.analytics import EV_DEADLINE_CREATED, schedule_track
 from services.deadlines import (
     get_deadline_action_choice_keyboard,
     get_deadline_action_choice_text,
@@ -508,6 +509,12 @@ async def submit_deadline_review(update: Update, context: ContextTypes.DEFAULT_T
             due_at=due_at,
             subject_id=context.user_data.get(UD_DDL_SUBJECT_ID),
         )
+    schedule_track(
+        context,
+        update.effective_user.id,
+        EV_DEADLINE_CREATED,
+        {"has_subject_id": context.user_data.get(UD_DDL_SUBJECT_ID) is not None},
+    )
     await _safe_edit(query, get_deadline_success_text("Готово! Дедлайн успешно добавлен."), get_deadline_success_keyboard())
     _clear_deadline_draft(context)
     return ConversationHandler.END

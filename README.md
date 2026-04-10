@@ -1,21 +1,21 @@
 # LoveStudy
 
-Telegram-бот для личных сообщений. Экраны и сценарии добавляются по прототипам.
+Telegram-бот для учёбы: материалы и предметы, викторины по тексту, дедлайны с напоминаниями, помодоро, профиль и друзья. Экраны и сценарии описаны в [docs/screens.md](docs/screens.md).
 
-## Быстрый старт
+## Быстрый старт (локально)
 
-1. **Токен:** в Telegram открой @BotFather → `/newbot` → имя и username (на `bot`) → скопируй токен.
-2. **Окружение:** один venv только внутри папки LoveStudy (не в родительской МАИНОР). Если уже есть `.venv` снаружи — не используй его для этого проекта.
+1. **Токен:** в Telegram открой @BotFather → `/newbot` (или `/mybots` → выбери бота → API Token).
+2. **Виртуальное окружение:** используй `venv` только внутри папки проекта `LoveStudy`, не смешивай с чужим `.venv` из родительских каталогов.
 
 ```bash
 cd LoveStudy
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-В `.env` пропиши `BOT_TOKEN=...` (токен от BotFather).
+В `.env` укажи `BOT_TOKEN=...`. Для сохранения данных в PostgreSQL добавь `DATABASE_URL=...` (см. [docs/deploy.md](docs/deploy.md)).
 
 3. **Запуск:**
 
@@ -23,29 +23,36 @@ cp .env.example .env
 python3 -m bot
 ```
 
-В Telegram открой бота и отправь `/start`. (На Windows: `python -m bot`, активация venv — `venv\Scripts\activate`.)
+В Telegram открой бота и отправь `/start`.
 
-**Один экземпляр:** с одним токеном может работать только один процесс (сервер или локально). Иначе будет `409 Conflict` в логах — останови лишние (Ctrl+C).
+**Один экземпляр на токен:** одновременно может работать только один процесс с long polling (сервер или локально). Иначе в логах будет `409 Conflict` — останови лишние копии (Ctrl+C или `systemctl stop` на сервере).
 
 ## Структура проекта
 
 ```
 LoveStudy/
-  bot/           # точка входа (python -m bot), сборка Application
+  bot/           # точка входа: python -m bot, Application
   config.py      # настройки из .env
-  handlers/      # хендлеры: update → сервис → ответ
-  services/      # бизнес-логика (тексты, сценарии)
-  db/            # БД: подключение и модели (опционально)
-  docs/          # документация (деплой и т.п.)
+  handlers/      # Telegram: update → сервис → ответ
+  services/      # тексты, клавиатуры, сценарии
+  db/            # SQLAlchemy: подключение, модели, репозитории
+  ai/            # генерация викторин (LLM)
+  deploy/        # systemd-юнит для продакшена (см. docs/deploy.md)
+  scripts/       # вспомогательные скрипты (диагностика и т.д.)
+  docs/          # деплой, экраны, аналитика
 ```
 
-## Деплой и БД
+События для графиков пишутся в PostgreSQL. **Минимум рук:** на ВМ `bash scripts/setup_metabase.sh`, на Mac `bash scripts/metabase_tunnel.sh`, дальше мастер Metabase в браузере — подробно **[docs/analytics.md](docs/analytics.md)**.
 
-Хостинг в Yandex Cloud (ВМ + опционально Managed PostgreSQL): **[docs/deploy.md](docs/deploy.md)**.
+## Деплой и база данных
 
-### Чеклист: что сделать, чтобы захостить и подключить БД
+Продакшен на Yandex Cloud (ВМ + опционально Managed PostgreSQL): **[docs/deploy.md](docs/deploy.md)**. Там же — юнит `deploy/lovestudy.service`, `rsync`, настройка `DATABASE_URL` и групп безопасности.
 
-1. **Локально:** в `.env` есть `BOT_TOKEN`, бот запускается (`python3 -m bot`), в Telegram отвечает на `/start`.
-2. **Сервер:** создать ВМ в Yandex Cloud (Ubuntu 22.04), залить код в `~/app`, сделать venv, установить зависимости, скопировать `.env` с `BOT_TOKEN`.
-3. **Запуск:** настроить systemd (см. docs/deploy.md), проверить `systemctl status lovestudy`, написать боту — ответ приходит.
-4. **БД (по желанию):** создать кластер Managed PostgreSQL в Yandex Cloud, скопировать строку подключения в `.env` на сервере как `DATABASE_URL=postgresql://...`. После добавления моделей в `db/models.py` при старте бота таблицы создадутся автоматически.
+### Короткий чеклист продакшена
+
+1. Локально бот отвечает на `/start` с заполненным `.env`.
+2. На ВМ (Ubuntu 22.04/24.04): код в `~/app`, venv, `pip install -r requirements.txt`, свой `~/app/.env` (не копируется через `rsync`).
+3. **Команды `systemctl`, пути `/home/kleshny/...` и установка юнита выполняются на сервере по SSH**, не на Mac — на macOS нет `systemctl`, а путь `/home/kleshny` существует только на ВМ.
+4. После `rsync` проверь, что на сервере есть `~/app/deploy/lovestudy.service`; если файла нет — повтори выкладку или создай юнит вручную (см. docs/deploy.md).
+5. Включи сервис: `sudo systemctl enable --now lovestudy`, проверь `sudo systemctl status lovestudy`.
+6. БД: кластер в той же VPC, правило SG на **TCP 6432** с подсети ВМ, в `.env` — `DATABASE_URL` и сертификат `~/.postgresql/root.crt` на ВМ.

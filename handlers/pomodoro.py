@@ -38,6 +38,7 @@ from db.repositories import (
     increment_pomo_sessions,
     save_pomo_settings,
 )
+from services.analytics import EV_POMODORO_WORK_DONE, schedule_track
 from services.pomodoro import (
     get_auto_toggle_keyboard,
     get_break_timer_keyboard,
@@ -147,6 +148,12 @@ async def _phase_done(context: ContextTypes.DEFAULT_TYPE) -> None:
     if phase == "work":
         work_min  = state["work_min"]
         break_min = state["break_min"]
+        schedule_track(
+            context,
+            user_id,
+            EV_POMODORO_WORK_DONE,
+            {"work_minutes": work_min},
+        )
 
         # Обновляем сообщение-таймер: убираем кнопки
         await _safe_edit(
@@ -347,12 +354,14 @@ async def pause_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def resume_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
-
     uid   = update.effective_user.id
     state = _get_state(context.bot_data, uid)
+
     if not state or not state.get("paused"):
+        await query.answer("Сессия не на паузе или уже завершена.", show_alert=True)
         return
+
+    await query.answer()
 
     remaining = state["paused_remaining"]
     now       = datetime.now(timezone.utc)
@@ -367,7 +376,24 @@ async def resume_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         text, kbd = get_break_timer_text(remaining), get_break_timer_keyboard()
 
-    await _safe_edit(context.bot, state["chat_id"], state["msg_id"], text, kbd)
+    try:
+        await context.bot.edit_message_text(
+            chat_id=state["chat_id"],
+            message_id=state["msg_id"],
+            text=text,
+            reply_markup=kbd,
+            parse_mode=ParseMode.HTML,
+        )
+    except BadRequest:
+        msg = await context.bot.send_message(
+            state["chat_id"],
+            text=text,
+            reply_markup=kbd,
+            parse_mode=ParseMode.HTML,
+        )
+        state["msg_id"] = msg.message_id
+        _set_state(context.bot_data, uid, state)
+
     _schedule_jobs(context.job_queue, uid, remaining)
 
 

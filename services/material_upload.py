@@ -87,7 +87,7 @@ def get_done_text(folder_name: str, is_new_folder: bool) -> str:
 
 
 def get_done_keyboard(subject_id: int | None = None) -> InlineKeyboardMarkup:
-    buttons = [[ib("📤 Загрузить ещё", callback_data=CB_MAT_MORE, style=BUTTON_PRIMARY)]]
+    buttons = [[ib("📤 Загрузить ещё", callback_data=CB_MAT_MORE, style=BUTTON_PRIMARY, skip_custom_emoji=True)]]
     if subject_id is not None:
         buttons.append([
             ib(

@@ -19,6 +19,12 @@ def get_database_url() -> str | None:
     return os.getenv("DATABASE_URL") or None
 
 
+def get_analytics_enabled() -> bool:
+    """Запись событий в таблицу analytics_events (нужен DATABASE_URL)."""
+    raw = (os.getenv("ANALYTICS_ENABLED") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 def get_gemini_api_key() -> str | None:
     """API-ключ Gemini для генерации викторин (fallback)."""
     return os.getenv("GEMINI_API_KEY") or None

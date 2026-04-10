@@ -81,7 +81,7 @@ def get_paused_text(remaining: int) -> str:
 
 def get_paused_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [ib("▶ Продолжить", callback_data=CB_POMO_RESUME, style=BUTTON_SUCCESS)],
+        [ib("▶ Продолжить", callback_data=CB_POMO_RESUME, style=BUTTON_SUCCESS, skip_custom_emoji=True)],
         [ib("❌ Завершить", callback_data=CB_POMO_STOP, style=BUTTON_DANGER)],
     ])
 

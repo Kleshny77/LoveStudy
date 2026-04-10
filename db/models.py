@@ -1,6 +1,7 @@
 # модели БД: пользователь, предмет, материал, настройки помодоро
 
 from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 
@@ -149,3 +150,15 @@ class PomodoroSessionLog(Base):
     user_telegram_id = Column(BigInteger, ForeignKey("users.telegram_id", ondelete="CASCADE"), nullable=False)
     work_minutes     = Column(Integer, nullable=False, default=25)
     completed_at     = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AnalyticsEvent(Base):
+    """События продукта для дашбордов (Metabase / DataLens и т.д.)."""
+
+    __tablename__ = "analytics_events"
+
+    id               = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_telegram_id = Column(BigInteger, nullable=True, index=True)
+    event_name       = Column(String(128), nullable=False, index=True)
+    properties       = Column(JSONB, nullable=True)
+    created_at       = Column(DateTime(timezone=True), server_default=func.now(), index=True)

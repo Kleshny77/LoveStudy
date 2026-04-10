@@ -47,7 +47,7 @@ def get_materials_hub_text() -> str:
 
 def get_materials_hub_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [ib("📤 Загрузить материалы", callback_data=CB_MAIN_UPLOAD, style=BUTTON_PRIMARY)],
+        [ib("📤 Загрузить материалы", callback_data=CB_MAIN_UPLOAD, style=BUTTON_PRIMARY, skip_custom_emoji=True)],
         [ib("📂 Просмотр предметов и материалов", callback_data=CB_MAIN_SUBJECTS)],
         [ib("🔙 Назад", callback_data=CB_NAV_MAIN)],
     ])

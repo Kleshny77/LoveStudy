@@ -5,9 +5,11 @@ from telegram import InlineKeyboardMarkup
 from constants import (
     CB_FILE_BACK,
     CB_FILE_TEST,
+    CB_MAT_CANCEL,
     CB_MAT_DEL,
     CB_MAT_DEL_N,
     CB_MAT_DEL_Y,
+    CB_MAT_TO_MAIN,
     CB_MAT_VIEW,
     CB_MAIN_UPLOAD,
     CB_NAV_HUB,
@@ -77,7 +79,7 @@ def get_subjects_list_keyboard(subjects: list[tuple[int, str]]) -> InlineKeyboar
     if row:
         buttons.append(row)
     if not subjects:
-        buttons.append([ib("📤 Загрузить первый файл", callback_data=CB_MAIN_UPLOAD, style=BUTTON_PRIMARY)])
+        buttons.append([ib("📤 Загрузить первый файл", callback_data=CB_MAIN_UPLOAD, style=BUTTON_PRIMARY, skip_custom_emoji=True)])
     buttons.append([
         ib("🔙 Назад", callback_data=CB_NAV_HUB),
         ib("🏠 Главное меню", callback_data=CB_NAV_MAIN),
@@ -158,7 +160,7 @@ def get_subject_detail_keyboard(
 
     # Действия
     buttons.append([ib("✨ Тест по ВСЕМ файлам", callback_data=CB_SUB_TEST, style=BUTTON_PRIMARY)])
-    buttons.append([ib("📥 Добавить файл", callback_data=f"{CB_SUB_ADD}{subject_id}", style=BUTTON_SUCCESS)])
+    buttons.append([ib("📥 Добавить файл", callback_data=f"{CB_SUB_ADD}{subject_id}", style=BUTTON_SUCCESS, skip_custom_emoji=True)])
     buttons.append([ib("🗑️ Удалить предмет", callback_data=CB_SUB_DEL, style=BUTTON_DANGER)])
     buttons.append([
         ib("🔙 Назад", callback_data=CB_NAV_SUBS),
@@ -263,10 +265,11 @@ def get_add_to_subject_text(subject_name: str) -> str:
 
 
 def get_add_to_subject_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки Назад/Главное меню — CB_MAT_* чтобы fallbacks ConversationHandler сбрасывали состояние."""
     return InlineKeyboardMarkup([
         [
-            ib("🔙 Назад", callback_data=CB_SUB_BACK),
-            ib("🏠 Главное меню", callback_data=CB_NAV_MAIN),
+            ib("🔙 Назад", callback_data=CB_MAT_CANCEL),
+            ib("🏠 Главное меню", callback_data=CB_MAT_TO_MAIN),
         ],
     ])
 
@@ -277,7 +280,7 @@ def get_add_done_text(filename: str, subject_name: str) -> str:
 
 def get_add_done_keyboard(subject_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [ib("📥 Добавить ещё файл", callback_data=f"{CB_SUB_ADD}{subject_id}", style=BUTTON_SUCCESS)],
+        [ib("📥 Добавить ещё файл", callback_data=f"{CB_SUB_ADD}{subject_id}", style=BUTTON_SUCCESS, skip_custom_emoji=True)],
         [ib("📂 Посмотреть все файлы в папке", callback_data=f"{CB_SUB_VIEW}{subject_id}", style=BUTTON_PRIMARY)],
         [ib("🏠 В главное меню", callback_data=CB_NAV_MAIN)],
     ])

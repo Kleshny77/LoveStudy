@@ -1,0 +1,14 @@
+[Unit]
+Description=LoveStudy Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=kleshny
+WorkingDirectory=/home/kleshny/app
+ExecStart=/home/kleshny/app/venv/bin/python3 -m bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

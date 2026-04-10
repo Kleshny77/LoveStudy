@@ -19,6 +19,7 @@ from config import (
     get_gemini_proxy_model,
     get_groq_api_key,
 )
+from services.analytics import EV_QUIZ_COMPLETED, schedule_track
 from constants import (
     CB_FILE_BACK,
     CB_FILE_TEST,
@@ -576,6 +577,18 @@ async def on_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.exception("quiz completion update failed: %s", e)
         return
+
+    schedule_track(
+        context,
+        user_id,
+        EV_QUIZ_COMPLETED,
+        {
+            "passed": passed,
+            "correct_answers": correct_answers,
+            "wrong_answers": wrong_answers,
+            "total_questions": total_questions,
+        },
+    )
 
     summary_text = _build_quiz_summary_text(
         title=session_meta.get("title") or "Тест завершён",
