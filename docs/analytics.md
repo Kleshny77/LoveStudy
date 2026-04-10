@@ -10,6 +10,17 @@
 - Скрипт **`scripts/setup_metabase.sh`** — на ВМ ставит Docker (если нет) и поднимает Metabase.
 - Скрипт **`scripts/metabase_tunnel.sh`** — на Mac открывает безопасный туннель к Metabase.
 - Скрипт **`scripts/check_analytics_events.py`** — проверяет, что таблица есть и сколько в ней строк.
+- Скрипт **`scripts/print_analytics_report.py`** — **DAU за 14 дней**, счётчики событий, каналы, помодоро и т.д. **в терминале** одной командой (тот же `DATABASE_URL`, что у бота). Metabase для этого не обязателен.
+
+### Сводка метрик в терминале (без ручного SQL в Metabase)
+
+На Mac или на ВМ после `cd ~/app`:
+
+```bash
+./venv/bin/python scripts/print_analytics_report.py
+```
+
+Нужен рабочий `.env` с `DATABASE_URL`. Это не заменяет графики в Metabase, но даёт те же цифры без кликов в UI.
 
 ---
 
@@ -101,13 +112,97 @@ exit
 
 ### Имена событий
 
-- `main_menu_shown`, `open_screen`, `material_saved`, `deadline_created`, `pomodoro_work_completed`, `quiz_session_completed`, `subscription_paid`.
+| Событие | Свойства (JSON) |
+|---------|-----------------|
+| `bot_started` | Каждый `/start`: `is_new_user`, `from_invite`, `acquisition_ref`, `start_token` |
+| `main_menu_shown` | `from_invite`, `acquisition_ref` |
+| `open_screen` | `screen` |
+| `material_saved` | `new_subject`, `subject_id` |
+| `deadline_created` | `has_subject_id` |
+| `pomodoro_work_completed` | `work_minutes` |
+| `quiz_generated` | `kind` (`subject` \| `file`), `subject_id`, `material_id`, `question_count` |
+| `quiz_session_completed` | `passed`, `correct_answers`, `wrong_answers`, `total_questions` |
+| `subscription_paid` | `total_amount`, `currency` |
+
+**Deep link:** `https://t.me/<bot>?start=ref_<канал>` — токен после `ref_`: латиница, цифры, `_`, `-`, до 64 символов. В `users.acquisition_ref` сохраняется **первый** непустой канал (`invite` для `invite_<id>` или значение после `ref_`).
 
 Отключить запись: `ANALYTICS_ENABLED=0` в `.env`.
 
 ---
 
+## Карта метрик LoveStudy (лекция 5 УП + продуктовая воронка)
+
+Ниже — **релевантный** набор: что уже можно считать в Metabase/DataLens по текущей БД, что покрывается только частично, и что логично добавить в код (события/поля). Идеи **Day 1/7/30 retention**, **engagement**, **TTFKA**, **частота**, **первая сессия**, **NPS**, **churn**, **сегменты** — из лекции 5 (блок «Что отслеживать»); кейсы про конфликты метрик (Facebook, Spotify и т.д.) в той же лекции напоминают: перед оптимизацией одной цифры проверяй, не ломаешь ли удержание или монетизацию.
+
+### Источники данных в проекте
+
+| Источник | Зачем |
+|----------|--------|
+| `users` | Регистрации (`created_at`), подписка (`subscription_expires_at`), активность (`last_activity_date`), **`acquisition_ref`** (первый канал из `/start`), агрегаты по квизам (`quiz_correct_answers`, `quiz_wrong_answers`), дневной лимит генераций (`quiz_generations_today` / `quiz_generations_date` — **без истории по дням**) |
+| `analytics_events` | Продуктовые события и разрезы (`event_name`, `properties`, `created_at`) — см. `services/analytics.py` |
+| `materials`, `subjects`, `deadlines` | Факты создания контента и планирования (даты, пользователь) |
+| `pomodoro_session_logs` | Завершённые рабочие фазы помодоро (`work_minutes`, `completed_at`) |
+| `friendships` | Социальные связи (по времени `created_at`) |
+
+---
+
+### Ключевые метрики (как в ТЗ продукта)
+
+| Метрика | Смысл | LoveStudy сейчас | Как считать / комментарий |
+|--------|--------|------------------|---------------------------|
+| **Total users** | Всего зарегистрированных | Да | `count(*)` из `users` |
+| **DAU** | Уникальные пользователи с активностью за день | Частично | По **`analytics_events`** (любое событие) или по **`last_activity_date = сегодня`** (если бот обновляет поле при действиях — проверь актуальность). WAU/MAU — то же с `date_trunc('week'/'month', ...)` |
+| **Retention (D1/D7/D30)** | Вернулись ли на 1-й / 7-й / 30-й день после регистрации | Частично | Когорта: `users.created_at` → наличие события или `last_activity_date` в окне **день N** (календарный день относительно `created_at`). Точнее — по дням активности из событий |
+| **Среднее число сгенерированных тестов** | Сколько раз пользователь запускал генерацию | Да (история) | События **`quiz_generated`** в `analytics_events`; дневной лимит по-прежнему в `users` |
+| **Частота Pomodoro** | Насколько часто закрывают рабочие сессии | Да | `pomodoro_session_logs`: число сессий и `sum(work_minutes)` на пользователя/неделю; дублируется смыслом с `pomodoro_work_completed` в аналитике |
+| **Доля Premium** | % пользователей с активной подпиской | Да | Доля `users` с `subscription_expires_at > now()` от total (или от активных за период — зафиксируй знаменатель в определении) |
+| **ARPU** | Доход на пользователя за период | Частично | Сумма `subscription_paid.total_amount` из событий / на paying users или на MAU — **после согласования**: валюта Stars, период, gross vs net |
+
+---
+
+### Метрики из лекции («Что отслеживать») — применение к боту
+
+| Тема лекции | Что измеряет | LoveStudy |
+|-------------|--------------|-----------|
+| **Engagement** | Частота и глубина использования ключевых функций | Плюс `bot_started`, `quiz_generated`; события `open_screen`, `material_saved`, `deadline_created`, `pomodoro_work_completed`, `quiz_session_completed`; плюс сырые строки в `materials` / `deadlines` / `pomodoro_session_logs` |
+| **Time to first key action (TTFKA)** | Время от регистрации до первого «целевого» действия | **Нет готового поля.** Считается в SQL: `min(event.created_at) - users.created_at` для выбранного события (например первый `material_saved` или `deadline_created`). Нужна полнота событий по всем целевым действиям |
+| **Frequency of use** | Ежедневно / еженедельно / ежемесячно возвращаются | DAU/WAU/MAU и распределение «дней с активностью» за 7/28 дней по `analytics_events` |
+| **Onboarding completion** | Дошли ли до конца введения | В боте нет явного чеклиста онбординга в БД — только **прокси**: дошёл до `main_menu_shown`, сделал ли что-то за первые 24 ч |
+| **First session activity** | Что сделали сразу после старта | В рамках **первого календарного дня** после `users.created_at`: какие `event_name` встречаются (и в каком порядке — сложнее, нужна сортировка по `created_at`) |
+| **Retention by acquisition channel** | Удержание по источнику | `users.acquisition_ref`, свойства `bot_started` / `main_menu_shown`; ссылки вида `?start=ref_vk` |
+| **NPS / early feedback** | Готовность рекомендовать | **Не в БД** — опрос в боте, форма, интервью; можно завести событие `nps_score` с `score`, `cohort_days` |
+| **Churn rate** | Перестали пользоваться за период | Определи «активен»: был ивент или обновлён `last_activity_date` за последние N дней → доля «был в прошлом окне, нет в текущем» |
+| **Behavioral segmentation** | Сегменты по поведению | В Metabase: представление/запрос — пользователь + метрики за 28 дней (сессии помодоро, материалы, тесты, дедлайны) → кластеры «фокус / только файлы / тесты» и т.д. |
+
+---
+
+### Воронка (как в описании продукта)
+
+Этапы ниже — **логические**; в SQL это обычно воронка «у пользователя когда-то было событие A, потом B» или «в первые 7 дней после регистрации».
+
+1. **Acquisition** — `bot_started`, `users.created_at`, **`acquisition_ref`**, `from_invite` / `start_token`.
+2. **Activation** — первое ключевое действие: первый предмет (`subjects`), первая загрузка (`material_saved` / `materials`), первый дедлайн (`deadline_created`), **`quiz_generated`** (старт генерации) и `quiz_session_completed` (прохождение).
+3. **Engagement** — повторные `open_screen`, регулярные `pomodoro_work_completed`, `quiz_session_completed`, новые `materials` / `deadlines`.
+4. **Retention** — возвраты по DAU/WAU и когортам D1/D7/D30.
+5. **Monetization (Premium)** — `subscription_paid`, состояние `subscription_expires_at`, конверсия free → paid.
+
+---
+
+### Уже в коде (расширение аналитики)
+
+- **`quiz_generated`** — после успешной генерации и отправки опросов.
+- **`bot_started`** — при каждом `/start` (отдельно от показа меню с задержкой).
+- **`ref_<канал>`** и **`invite_<id>`** → `users.acquisition_ref` (`invite` или токен после `ref_`).
+
+Опционально позже: **NPS** (событие с оценкой), длительность сессии в секундах.
+
+---
+
 ## Примеры SQL в Metabase (New → Question → Raw SQL)
+
+**Полный набор запросов (DAU/WAU/MAU, retention, воронка, Premium, тесты, помодоро и т.д.)** — один файл, блоки разделены комментариями:  
+**[`sql/metabase_all_metrics.sql`](../sql/metabase_all_metrics.sql)**  
+В Metabase создавай **отдельный вопрос на каждый блок** между линиями `====`.
 
 DAU по событиям:
 

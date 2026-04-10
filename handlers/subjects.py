@@ -34,6 +34,7 @@ from db.repositories import (
     get_subject_by_id,
     get_user_subjects,
 )
+from services.callback_feedback import MSG_NO_DATABASE, answer_callback
 from services.subject_detail import (
     get_add_to_subject_text,
     get_deleted_text,
@@ -57,7 +58,12 @@ logger = logging.getLogger(__name__)
 # Список предметов
 # ──────────────────────────────────────────────
 
-async def send_subjects_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def send_subjects_screen(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    skip_callback_answer: bool = False,
+) -> None:
     """Показывает список предметов. Вызывается из main_menu handler."""
     session_factory = context.bot_data.get("session_factory")
     uid = update.effective_user.id
@@ -75,6 +81,8 @@ async def send_subjects_screen(update: Update, context: ContextTypes.DEFAULT_TYP
 
     query = update.callback_query
     if query:
+        if not skip_callback_answer:
+            await answer_callback(query)
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="HTML")
     else:
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -108,7 +116,10 @@ async def _show_subject_detail(
             logger.exception("Ошибка при загрузке предмета %s", subject_id)
 
     if not subject:
-        await query.answer("Предмет не найден.", show_alert=True)
+        if not session_factory:
+            await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        else:
+            await answer_callback(query, "Предмет не найден.", alert=True)
         return
 
     context.user_data[UD_VIEWING_SUBJECT_ID] = subject_id
@@ -121,23 +132,23 @@ async def _show_subject_detail(
     text = get_subject_detail_text(subject.name, materials, learned_count, page, total_pages)
     keyboard = get_subject_detail_keyboard(materials, subject_id, page, total_pages)
 
+    await answer_callback(query)
     await query.edit_message_text(text, reply_markup=keyboard, parse_mode="HTML")
 
 
 async def on_subject_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     subject_id = int(query.data.removeprefix(CB_SUB_VIEW))
     await _show_subject_detail(update, context, subject_id, page=1)
 
 
 async def on_page_changed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     # формат: sub:pg:<subject_id>:<page>
     payload = query.data.removeprefix(CB_SUB_PAGE)
     parts = payload.split(":")
     if len(parts) != 2:
+        await answer_callback(query, "Не удалось перелистать страницу.", alert=True)
         return
     subject_id, page = int(parts[0]), int(parts[1])
     await _show_subject_detail(update, context, subject_id, page=page)
@@ -146,10 +157,10 @@ async def on_page_changed(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def on_back_to_subject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Возврат к текущему предмету (из детали файла или удаления)."""
     query = update.callback_query
-    await query.answer()
     subject_id = context.user_data.get(UD_VIEWING_SUBJECT_ID)
     if not subject_id:
         from services.main_menu import get_materials_hub_keyboard, get_materials_hub_text
+        await answer_callback(query)
         await query.edit_message_text(
             get_materials_hub_text(),
             reply_markup=get_materials_hub_keyboard(),
@@ -166,6 +177,7 @@ async def on_back_to_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
+        await answer_callback(query)
         await _show_subject_detail_as_new(update, context, subject_id)
     else:
         await _show_subject_detail(update, context, subject_id, page=1)
@@ -178,7 +190,6 @@ async def on_back_to_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def on_material_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет файл/ссылку и кнопки действий."""
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     material_id = int(query.data.removeprefix(CB_MAT_VIEW))
     session_factory = context.bot_data.get("session_factory")
@@ -192,21 +203,26 @@ async def on_material_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.exception("Ошибка при загрузке материала %s", material_id)
 
     if not material:
-        await query.answer("Файл не найден.", show_alert=True)
+        if not session_factory:
+            await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        else:
+            await answer_callback(query, "Файл не найден.", alert=True)
         return
 
     context.user_data[UD_VIEWING_MATERIAL_ID] = material_id
     keyboard = get_file_detail_keyboard()
 
     if material.material_type == "Ссылка":
+        await answer_callback(query)
         url = material.url or ""
         text = get_file_link_text(url, material.original_filename)
         await query.message.reply_text(text, reply_markup=keyboard, parse_mode="HTML")
     else:
         file_id = material.telegram_file_id
         if not file_id:
-            await query.answer("Файл недоступен.", show_alert=True)
+            await answer_callback(query, "Файл недоступен для скачивания.", alert=True)
             return
+        await answer_callback(query)
         if material.material_type == "Изображение":
             await query.message.reply_photo(
                 photo=file_id,
@@ -232,7 +248,6 @@ async def on_material_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def on_back_to_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Возврат к файлу с подтверждения удаления."""
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     material_id = context.user_data.get(UD_VIEWING_MATERIAL_ID)
     if not material_id:
@@ -252,6 +267,7 @@ async def on_back_to_file(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await on_back_to_subject(update, context)
         return
 
+    await answer_callback(query)
     keyboard = get_file_detail_keyboard()
     if material.material_type == "Ссылка":
         url = material.url or ""
@@ -275,11 +291,10 @@ async def on_back_to_file(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def on_delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает подтверждение удаления."""
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     material_id = context.user_data.get(UD_VIEWING_MATERIAL_ID)
     if not material_id:
-        await query.answer("Не удалось определить файл.", show_alert=True)
+        await answer_callback(query, "Не удалось определить файл. Открой его ещё раз.", alert=True)
         return
 
     session_factory = context.bot_data.get("session_factory")
@@ -293,6 +308,7 @@ async def on_delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception:
             logger.exception("Ошибка при загрузке имени материала для удаления")
 
+    await answer_callback(query)
     text = get_delete_confirm_text(name)
     keyboard = get_delete_confirm_keyboard()
     # отправляем новым сообщением, файловое сообщение нельзя редактировать в текст
@@ -301,11 +317,10 @@ async def on_delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def on_delete_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     material_id = context.user_data.get(UD_VIEWING_MATERIAL_ID)
     if not material_id:
-        await query.answer("Не удалось определить файл.", show_alert=True)
+        await answer_callback(query, "Не удалось определить файл.", alert=True)
         return
 
     session_factory = context.bot_data.get("session_factory")
@@ -320,10 +335,15 @@ async def on_delete_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE
                 deleted = await delete_material(session, material_id, uid)
         except Exception:
             logger.exception("Ошибка при удалении материала %s", material_id)
-            await query.edit_message_text("⚠️ Не удалось удалить файл. Попробуй ещё раз.")
+            await answer_callback(query, "Не удалось удалить файл. Попробуй ещё раз.", alert=True)
+            try:
+                await query.edit_message_text("⚠️ Не удалось удалить файл. Попробуй ещё раз.")
+            except Exception:
+                pass
             return
 
     if deleted:
+        await answer_callback(query)
         context.user_data.pop(UD_VIEWING_MATERIAL_ID, None)
         await query.edit_message_text(get_deleted_text(name), parse_mode="HTML")
         # показываем обновлённый предмет
@@ -331,7 +351,11 @@ async def on_delete_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE
         if subject_id:
             await _show_subject_detail_as_new(update, context, subject_id)
     else:
-        await query.edit_message_text("⚠️ Файл не найден или уже удалён.")
+        await answer_callback(query, "Файл не найден или уже удалён.", alert=True)
+        try:
+            await query.edit_message_text("⚠️ Файл не найден или уже удалён.")
+        except Exception:
+            pass
 
 
 async def _show_subject_detail_as_new(
@@ -374,11 +398,10 @@ async def on_delete_cancelled(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def on_delete_subject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     subject_id = context.user_data.get(UD_VIEWING_SUBJECT_ID)
     if not subject_id:
-        await query.answer("Не удалось определить предмет.", show_alert=True)
+        await answer_callback(query, "Не удалось определить предмет.", alert=True)
         return
 
     session_factory = context.bot_data.get("session_factory")
@@ -394,6 +417,7 @@ async def on_delete_subject(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception:
             logger.exception("Ошибка при загрузке предмета для удаления")
 
+    await answer_callback(query)
     await query.message.reply_text(
         get_subject_delete_confirm_text(subject_name, materials_count),
         reply_markup=get_subject_delete_confirm_keyboard(),
@@ -403,11 +427,10 @@ async def on_delete_subject(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def on_delete_subject_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     subject_id = context.user_data.get(UD_VIEWING_SUBJECT_ID)
     if not subject_id:
-        await query.answer("Не удалось определить предмет.", show_alert=True)
+        await answer_callback(query, "Не удалось определить предмет.", alert=True)
         return
 
     session_factory = context.bot_data.get("session_factory")
@@ -422,18 +445,27 @@ async def on_delete_subject_confirmed(update: Update, context: ContextTypes.DEFA
                 deleted = await delete_subject(session, subject_id, uid)
         except Exception:
             logger.exception("Ошибка при удалении предмета %s", subject_id)
-            await query.edit_message_text("⚠️ Не удалось удалить предмет. Попробуй ещё раз.")
+            await answer_callback(query, "Не удалось удалить предмет. Попробуй ещё раз.", alert=True)
+            try:
+                await query.edit_message_text("⚠️ Не удалось удалить предмет. Попробуй ещё раз.")
+            except Exception:
+                pass
             return
 
     if not deleted:
-        await query.edit_message_text("⚠️ Предмет не найден или уже удалён.")
+        await answer_callback(query, "Предмет не найден или уже удалён.", alert=True)
+        try:
+            await query.edit_message_text("⚠️ Предмет не найден или уже удалён.")
+        except Exception:
+            pass
         return
 
+    await answer_callback(query)
     context.user_data.pop(UD_VIEWING_SUBJECT_ID, None)
     context.user_data.pop(UD_VIEWING_SUBJECT_NAME, None)
     context.user_data.pop(UD_VIEWING_MATERIAL_ID, None)
     await query.edit_message_text(get_subject_deleted_text(subject_name), parse_mode="HTML")
-    await send_subjects_screen(update, context)
+    await send_subjects_screen(update, context, skip_callback_answer=True)
 
 
 async def on_delete_subject_cancelled(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

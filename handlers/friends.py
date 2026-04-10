@@ -22,6 +22,7 @@ from db.repositories import (
     get_friends,
     get_friends_rating,
 )
+from services.callback_feedback import MSG_NO_DATABASE, answer_callback
 from services.friends import (
     get_friends_list_keyboard,
     get_friends_list_text,
@@ -64,10 +65,14 @@ async def _safe_edit(query, text: str, keyboard, parse_mode=_HTML) -> None:
 
 async def open_friends_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+    await answer_callback(query)
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         friends = await get_friends(session, uid)
         rating  = await get_friends_rating(session, uid)
 
@@ -89,10 +94,14 @@ async def open_friends_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def open_rating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+    await answer_callback(query)
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         ranking = await get_friends_rating(session, uid)
 
     text = get_rating_text(ranking, uid)
@@ -105,10 +114,14 @@ async def open_rating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def open_friends_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+    await answer_callback(query)
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         friends = await get_friends(session, uid)
 
     await _safe_edit(query, get_friends_list_text(friends), get_friends_list_keyboard())
@@ -120,7 +133,7 @@ async def open_friends_list(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def open_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    await answer_callback(query)
 
     uid      = update.effective_user.id
     bot_name = (await context.bot.get_me()).username

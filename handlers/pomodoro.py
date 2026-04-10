@@ -39,6 +39,7 @@ from db.repositories import (
     save_pomo_settings,
 )
 from services.analytics import EV_POMODORO_WORK_DONE, schedule_track
+from services.callback_feedback import MSG_NO_DATABASE, answer_callback
 from services.pomodoro import (
     get_auto_toggle_keyboard,
     get_break_timer_keyboard,
@@ -246,7 +247,15 @@ def _schedule_jobs(job_queue, user_id: int, duration_sec: int) -> None:
 
 async def _show_focus_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit: bool = True) -> None:
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        if edit and update.callback_query:
+            await answer_callback(update.callback_query, MSG_NO_DATABASE, alert=True)
+        elif update.effective_chat:
+            await update.effective_chat.send_message(MSG_NO_DATABASE, parse_mode=ParseMode.HTML)
+        return
+
+    async with factory() as session:
         cfg = await get_pomo_settings(session, uid)
 
     text = get_focus_menu_text(cfg.work_minutes, cfg.break_minutes, cfg.sessions_today)
@@ -268,6 +277,9 @@ async def _show_focus_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, e
 async def open_pomodoro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Открыть фокус-экран (из главного меню или после «В меню»)."""
     query = update.callback_query
+    if not context.bot_data.get("session_factory"):
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
     await query.answer()
     await _show_focus_menu(update, context, edit=True)
 
@@ -279,19 +291,27 @@ async def open_pomodoro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def start_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Начать рабочую фазу."""
     query = update.callback_query
-    await query.answer()
-
     uid     = update.effective_user.id
     chat_id = update.effective_chat.id
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+
+    await query.answer()
+
     logger.info("start_focus called: uid=%s chat=%s job_queue=%s", uid, chat_id, context.job_queue)
 
     try:
-        # Если сессия уже идёт — игнорируем
         if _get_state(context.bot_data, uid):
             logger.info("start_focus: session already running for uid=%s, skipping", uid)
+            await query.message.reply_text(
+                "⏳ У тебя уже идёт фокус-сессия. Сначала останови таймер кнопкой «Стоп» или дождись конца фазы.",
+                parse_mode=ParseMode.HTML,
+            )
             return
 
-        async with context.bot_data["session_factory"]() as session:
+        async with factory() as session:
             cfg = await get_pomo_settings(session, uid)
 
         work_sec = cfg.work_minutes * 60
@@ -452,12 +472,16 @@ async def skip_break(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def next_cycle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Начать следующий цикл (из экрана «Цикл завершён»)."""
     query = update.callback_query
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
     await query.answer()
 
     uid     = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         cfg = await get_pomo_settings(session, uid)
 
     work_sec = cfg.work_minutes * 60
@@ -510,6 +534,10 @@ async def open_interval_cfg(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def apply_preset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Применить пресет работа/перерыв."""
     query = update.callback_query
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
     await query.answer()
 
     # callback_data = "pom:pre:<work>:<break>"
@@ -519,7 +547,7 @@ async def apply_preset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     break_min = int(break_str)
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         await save_pomo_settings(session, uid, work_minutes=work_min, break_minutes=break_min)
 
     # Возвращаем на фокус-экран с обновлёнными настройками

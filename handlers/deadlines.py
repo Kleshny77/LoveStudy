@@ -93,6 +93,7 @@ from db.repositories import (
 )
 from db.models import Deadline, User
 from services.analytics import EV_DEADLINE_CREATED, schedule_track
+from services.callback_feedback import MSG_NO_DATABASE, answer_callback
 from services.deadlines import (
     get_deadline_action_choice_keyboard,
     get_deadline_action_choice_text,
@@ -207,29 +208,44 @@ async def _safe_edit(query, text: str, keyboard) -> None:
 
 
 async def _render_deadlines_hub(query, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+    async with factory() as session:
         active_items = await list_active_deadlines(session, user_id, limit=5)
         subjects = await list_deadline_subjects(session, user_id)
+    await answer_callback(query)
     await _safe_edit(query, get_deadlines_hub_text(active_items), get_deadlines_hub_keyboard(subjects))
 
 
 async def _render_deadline_subjects(query, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+    async with factory() as session:
         subjects = await list_deadline_subjects(session, user_id)
+    await answer_callback(query)
     await _safe_edit(query, get_deadline_subjects_text(subjects), get_deadline_subjects_keyboard(subjects))
 
 
 async def _render_subject_deadlines(query, context: ContextTypes.DEFAULT_TYPE, user_id: int, subject_id: int) -> None:
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+    async with factory() as session:
         subject = await get_subject_by_id(session, subject_id, user_id)
         deadlines = await list_subject_deadlines(session, user_id, subject_id)
 
     if subject is None:
-        await query.answer("Предмет не найден", show_alert=True)
+        await answer_callback(query, "Предмет не найден", alert=True)
         return
 
     context.user_data[UD_DDL_SUBJECT_ID] = subject.id
     context.user_data[UD_DDL_SUBJECT_NAME] = subject.name
+    await answer_callback(query)
     await _safe_edit(
         query,
         get_subject_deadlines_text(subject.name, deadlines),
@@ -239,40 +255,34 @@ async def _render_subject_deadlines(query, context: ContextTypes.DEFAULT_TYPE, u
 
 async def open_deadlines_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     await _render_deadlines_hub(query, context, update.effective_user.id)
 
 
 async def open_deadline_subjects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     await _render_deadline_subjects(query, context, update.effective_user.id)
 
 
 async def open_subject_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     subject_id = int(query.data.removeprefix(CB_DDL_SUBJECT))
     await _render_subject_deadlines(query, context, update.effective_user.id, subject_id)
 
 
 async def back_to_deadlines_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer()
     await _render_deadlines_hub(query, context, update.effective_user.id)
     return ConversationHandler.END
 
 
 async def back_to_deadline_subjects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer()
     await _render_deadline_subjects(query, context, update.effective_user.id)
     return ConversationHandler.END
 
 
 async def back_to_subject_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer()
     subject_id = context.user_data.get(UD_DDL_SUBJECT_ID)
     if not subject_id:
         await _render_deadline_subjects(query, context, update.effective_user.id)
@@ -495,12 +505,15 @@ async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def submit_deadline_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer()
     due_at = _build_due_at(context)
     if _is_past_due(due_at):
-        await query.answer("Нельзя поставить дедлайн в прошлом.", show_alert=True)
+        await answer_callback(query, "Нельзя поставить дедлайн в прошлом.", alert=True)
         return ST_DDL_REVIEW
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return ST_DDL_REVIEW
+    async with factory() as session:
         await create_deadline(
             session,
             user_telegram_id=update.effective_user.id,
@@ -515,6 +528,7 @@ async def submit_deadline_review(update: Update, context: ContextTypes.DEFAULT_T
         EV_DEADLINE_CREATED,
         {"has_subject_id": context.user_data.get(UD_DDL_SUBJECT_ID) is not None},
     )
+    await answer_callback(query)
     await _safe_edit(query, get_deadline_success_text("Готово! Дедлайн успешно добавлен."), get_deadline_success_keyboard())
     _clear_deadline_draft(context)
     return ConversationHandler.END
@@ -564,16 +578,21 @@ async def start_deadline_action(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     subject_id = context.user_data.get(UD_DDL_SUBJECT_ID)
     if not subject_id:
-        await query.answer("Не удалось определить предмет.", show_alert=True)
+        await answer_callback(query, "Не удалось определить предмет.", alert=True)
         return ConversationHandler.END
 
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return ConversationHandler.END
+
+    async with factory() as session:
         deadlines = await list_subject_deadlines(session, update.effective_user.id, subject_id)
     if not deadlines:
-        await query.answer("Здесь пока нет активных дедлайнов.", show_alert=True)
+        await answer_callback(query, "Здесь пока нет активных дедлайнов.", alert=True)
         return ConversationHandler.END
 
-    await query.answer()
+    await answer_callback(query)
     action = query.data
     context.user_data[UD_DDL_ACTION] = action
     action_code = _DEADLINE_ACTION_CODES[action]
@@ -593,17 +612,21 @@ async def pick_deadline_action(update: Update, context: ContextTypes.DEFAULT_TYP
         action_code, deadline_id_raw = payload.split(":", 1)
         deadline_id = int(deadline_id_raw)
     except ValueError:
-        await query.answer("Не удалось определить дедлайн.", show_alert=True)
+        await answer_callback(query, "Не удалось определить дедлайн.", alert=True)
         return ConversationHandler.END
 
     action = _DEADLINE_ACTION_BY_CODE.get(action_code)
     if action is None:
-        await query.answer("Неизвестное действие.", show_alert=True)
+        await answer_callback(query, "Неизвестное действие.", alert=True)
         return ConversationHandler.END
 
-    await query.answer()
     subject_id = context.user_data.get(UD_DDL_SUBJECT_ID)
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return ConversationHandler.END
+
+    async with factory() as session:
         result = await session.execute(
             select(Deadline).where(
                 Deadline.id == deadline_id,
@@ -612,11 +635,12 @@ async def pick_deadline_action(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         deadline = result.scalar_one_or_none()
         if deadline is None or (subject_id and deadline.subject_id != subject_id):
-            await query.answer("Дедлайн не найден.", show_alert=True)
+            await answer_callback(query, "Дедлайн не найден.", alert=True)
             return ConversationHandler.END
 
         if action == CB_DDL_ACTION_DONE:
             await complete_deadline(session, update.effective_user.id, deadline.id)
+            await answer_callback(query)
             await _safe_edit(
                 query,
                 get_deadline_success_text(f"«{deadline.title}» отмечен выполненным."),
@@ -625,6 +649,7 @@ async def pick_deadline_action(update: Update, context: ContextTypes.DEFAULT_TYP
             return ConversationHandler.END
         if action == CB_DDL_ACTION_DELETE:
             await remove_deadline(session, update.effective_user.id, deadline.id)
+            await answer_callback(query)
             await _safe_edit(
                 query,
                 get_deadline_success_text(f"Дедлайн «{deadline.title}» успешно удалён."),
@@ -632,22 +657,24 @@ async def pick_deadline_action(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return ConversationHandler.END
 
-    context.user_data["ddl_action_deadline_id"] = deadline.id
-    context.user_data["ddl_action_deadline_title"] = deadline.title
-    if action == CB_DDL_ACTION_MOVE:
+        context.user_data["ddl_action_deadline_id"] = deadline.id
+        context.user_data["ddl_action_deadline_title"] = deadline.title
+        if action == CB_DDL_ACTION_MOVE:
+            await answer_callback(query)
+            await _safe_edit(
+                query,
+                get_date_step_text(),
+                get_single_back_keyboard(CB_DDL_BACK_SUBJECT),
+            )
+            return ST_DDL_MOVE_DATE
+
+        await answer_callback(query)
         await _safe_edit(
             query,
-            get_date_step_text(),
-            get_single_back_keyboard(CB_DDL_BACK_SUBJECT),
+            get_deadline_reminder_choice_text(deadline.title),
+            get_deadline_reminder_choice_keyboard(),
         )
-        return ST_DDL_MOVE_DATE
-
-    await _safe_edit(
-        query,
-        get_deadline_reminder_choice_text(deadline.title),
-        get_deadline_reminder_choice_keyboard(),
-    )
-    return ST_DDL_REMINDER_PICK
+        return ST_DDL_REMINDER_PICK
 
 
 async def receive_move_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

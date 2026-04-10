@@ -1,10 +1,11 @@
 # /start — главный экран.
-# Поддерживает deep link /start invite_<user_id> для системы друзей.
+# Deep link: invite_<user_id> (друзья), ref_<токен> — канал привлечения (латиница, цифры, _-).
 # Если бот был оффлайн и накопилась куча /start — отвечаем ровно один раз:
 # каждый новый /start отменяет предыдущий отложенный ответ (debounce).
 
 import asyncio
 import logging
+import re
 
 from telegram import Update
 from telegram.constants import ParseMode
@@ -15,7 +16,7 @@ from services.friends import (
     get_new_friend_keyboard,
     get_new_friend_text,
 )
-from services.analytics import EV_MAIN_MENU_SHOWN, schedule_track
+from services.analytics import EV_BOT_STARTED, EV_MAIN_MENU_SHOWN, schedule_track
 from services.main_menu import get_main_menu_keyboard, get_main_menu_text
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,34 @@ _START_DELAY = 0.7  # секунд — окно дедупликации при 
 
 # Хранит отложенную задачу отправки для каждого chat_id
 _pending: dict[int, asyncio.Task] = {}
+
+_REF_TOKEN_RE = re.compile(r"^[\w-]{1,64}$")
+
+
+def _sanitize_ref_token(raw: str) -> str | None:
+    s = raw.strip()[:64]
+    if not s or not _REF_TOKEN_RE.match(s):
+        return None
+    return s
+
+
+def _parse_start_args(args: list[str]) -> tuple[int | None, str | None, str | None]:
+    """Deep link: invite_<id>, ref_<token>. Возвращает (inviter_id, acquisition_ref, start_token для аналитики)."""
+    if not args:
+        return None, None, None
+    arg = args[0].strip()
+    if not arg:
+        return None, None, None
+    if arg.startswith("invite_"):
+        try:
+            inviter_id = int(arg[len("invite_") :])
+        except ValueError:
+            return None, None, None
+        return inviter_id, "invite", "invite"
+    if arg.startswith("ref_"):
+        token = _sanitize_ref_token(arg[4:])
+        return None, token, token or None
+    return None, None, None
 
 
 async def _process_invite(context: ContextTypes.DEFAULT_TYPE, inviter_id: int, new_user_id: int) -> None:
@@ -65,28 +94,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     name    = update.effective_user.first_name
     username = update.effective_user.username
 
-    # ── Обработка deep link (/start invite_<inviter_id>) ──
+    # ── Deep link: invite_<id>, ref_<канал> ──
     args = context.args or []
-    inviter_id: int | None = None
-    if args and args[0].startswith("invite_"):
-        try:
-            inviter_id = int(args[0][len("invite_"):])
-        except ValueError:
-            pass
+    inviter_id, acquisition_ref, start_token = _parse_start_args(args)
 
     # ── Стрик будет считаться по тестам, а не по /start.
     #    Сбрасываем старое legacy-значение daily-visit, если оно осталось в БД.
     factory = context.bot_data.get("session_factory")
+    menu_acquisition_ref: str | None = acquisition_ref
     if factory:
         try:
             async with factory() as session:
-                await get_or_create_user(
+                user, is_new = await get_or_create_user(
                     session,
                     telegram_id=uid,
                     username=username,
                     first_name=name,
+                    acquisition_ref=acquisition_ref,
                 )
                 await reset_user_streak(session, uid)
+                menu_acquisition_ref = user.acquisition_ref
+                schedule_track(
+                    context,
+                    uid,
+                    EV_BOT_STARTED,
+                    {
+                        "is_new_user": is_new,
+                        "from_invite": inviter_id is not None,
+                        "acquisition_ref": user.acquisition_ref,
+                        "start_token": start_token,
+                    },
+                )
         except Exception:
             logger.exception("Ошибка при get_or_create_user/reset_streak (uid=%s)", uid)
 
@@ -108,7 +146,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 context,
                 uid,
                 EV_MAIN_MENU_SHOWN,
-                {"from_invite": inviter_id is not None},
+                {
+                    "from_invite": inviter_id is not None,
+                    "acquisition_ref": menu_acquisition_ref,
+                },
             )
             await context.bot.send_message(
                 chat_id=chat_id,

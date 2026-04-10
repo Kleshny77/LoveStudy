@@ -24,6 +24,8 @@ class User(Base):
     subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
     subscription_provider_charge_id = Column(String(255), nullable=True)
     subscription_telegram_charge_id = Column(String(255), nullable=True)
+    # Первый зафиксированный канал: ref_* из /start или "invite" при invite_-ссылке
+    acquisition_ref = Column(String(128), nullable=True)
 
 
 class TelegramUXSettings(Base):

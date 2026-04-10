@@ -6,6 +6,8 @@ import traceback
 from telegram import Update
 from telegram.ext import Application, ContextTypes
 
+from services.callback_feedback import answer_callback
+
 logger = logging.getLogger(__name__)
 
 _USER_ERROR_MSG = (
@@ -22,14 +24,14 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     if not isinstance(update, Update):
         return
 
-    # Если ожидает ответа на callback — сразу закрываем «загрузку» кнопки
     if update.callback_query:
-        try:
-            await update.callback_query.answer()
-        except Exception:
-            pass
+        await answer_callback(
+            update.callback_query,
+            "Сбой в боте. Нажми /start или попробуй чуть позже.",
+            alert=True,
+        )
+        return
 
-    # Отправляем пользователю понятное сообщение
     try:
         if update.effective_chat:
             await context.bot.send_message(

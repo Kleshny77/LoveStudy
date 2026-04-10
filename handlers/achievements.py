@@ -17,6 +17,7 @@ from constants import (
     UD_ACH_BACK_CB,
 )
 from db.repositories import get_achievements_overview
+from services.callback_feedback import MSG_NO_DATABASE, answer_callback
 from services.achievements import (
     get_achievement_category_keyboard,
     get_achievement_category_text,
@@ -43,34 +44,36 @@ def _get_back(context: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 async def _render_hub(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
+
     uid = query.from_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         overview = await get_achievements_overview(session, uid)
 
     if overview is None:
-        await query.answer("Достижения пока недоступны", show_alert=True)
+        await answer_callback(query, "Достижения сейчас недоступны. Попробуй позже.", alert=True)
         return
 
+    await answer_callback(query)
     await _safe_edit(query, get_achievements_hub_text(overview), get_achievements_hub_keyboard())
 
 
 async def open_from_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     _set_back(context, CB_MAIN_PROFILE)
     await _render_hub(query, context)
 
 
 async def open_from_friends(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     _set_back(context, CB_FRIENDS)
     await _render_hub(query, context)
 
 
 async def back_from_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
     target = _get_back(context)
 
     if target == CB_FRIENDS:
@@ -86,27 +89,30 @@ async def back_from_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def open_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     await _render_hub(query, context)
 
 
 async def _open_category(update: Update, context: ContextTypes.DEFAULT_TYPE, category_key: str) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         overview = await get_achievements_overview(session, uid)
 
     if overview is None:
-        await query.answer("Достижения пока недоступны", show_alert=True)
+        await answer_callback(query, "Достижения сейчас недоступны. Попробуй позже.", alert=True)
         return
 
     category = next((item for item in overview.categories if item.key == category_key), None)
     if category is None:
-        await query.answer("Категория не найдена", show_alert=True)
+        await answer_callback(query, "Категория не найдена", alert=True)
         return
 
+    await answer_callback(query)
     await _safe_edit(query, get_achievement_category_text(category), get_achievement_category_keyboard())
 
 

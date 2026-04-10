@@ -273,7 +273,10 @@ async def get_or_create_user(
     telegram_id: int,
     username: str | None,
     first_name: str | None,
-) -> User:
+    *,
+    acquisition_ref: str | None = None,
+) -> tuple[User, bool]:
+    """Возвращает (пользователь, создан_ли_только_что). acquisition_ref пишется один раз (пока поле пустое)."""
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
     user = result.scalar_one_or_none()
     if user is not None:
@@ -284,14 +287,19 @@ async def get_or_create_user(
         if user.first_name != first_name:
             user.first_name = first_name
             changed = True
+        if acquisition_ref and not user.acquisition_ref:
+            user.acquisition_ref = acquisition_ref[:128]
+            changed = True
         if changed:
             await session.commit()
-        return user
-    user = User(telegram_id=telegram_id, username=username, first_name=first_name)
+            await session.refresh(user)
+        return user, False
+    ref = (acquisition_ref[:128] if acquisition_ref else None)
+    user = User(telegram_id=telegram_id, username=username, first_name=first_name, acquisition_ref=ref)
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    return user
+    return user, True
 
 
 def _quiz_reset_at(now: datetime | None = None) -> datetime:

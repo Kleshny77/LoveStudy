@@ -1,9 +1,11 @@
 # настройки из .env; один вход для всего приложения
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Явный путь: не зависит от cwd (systemd, cron, -m bot из другой папки).
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def get_bot_token() -> str:
@@ -53,6 +55,16 @@ def get_deepseek_api_key() -> str | None:
 def get_groq_api_key() -> str | None:
     """API-ключ Groq (Llama) для генерации викторин. Используется как fallback после DeepSeek."""
     return os.getenv("GROQ_API_KEY") or None
+
+
+def is_quiz_ai_configured() -> bool:
+    """True, если задан хотя бы один ключ для генерации викторин."""
+    return bool(
+        get_gemini_proxy_api_key()
+        or get_deepseek_api_key()
+        or get_groq_api_key()
+        or get_gemini_api_key()
+    )
 
 
 def get_subscription_price_stars() -> int:

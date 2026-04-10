@@ -18,8 +18,15 @@ from config import (
     get_gemini_proxy_base_url,
     get_gemini_proxy_model,
     get_groq_api_key,
+    is_quiz_ai_configured,
 )
-from services.analytics import EV_QUIZ_COMPLETED, schedule_track
+from services.analytics import EV_QUIZ_COMPLETED, EV_QUIZ_GENERATED, schedule_track
+from services.callback_feedback import (
+    MSG_NO_DATABASE,
+    MSG_QUIZ_AI_UNAVAILABLE,
+    MSG_QUIZ_LIMIT_SHORT,
+    answer_callback,
+)
 from constants import (
     CB_FILE_BACK,
     CB_FILE_TEST,
@@ -279,16 +286,18 @@ async def _check_quiz_generation_limit(
 ) -> bool:
     session_factory = context.bot_data.get("session_factory")
     if not session_factory:
-        await query.answer("База данных недоступна.", show_alert=True)
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
         return False
     async with session_factory() as session:
         status = await get_quiz_generation_status(session, user_id)
     if status.allowed:
         return True
-    await query.message.reply_text(
-        _build_quiz_limit_text(used_today=status.used_today, reset_at=status.next_reset_at),
-        parse_mode="HTML",
-    )
+    await answer_callback(query, MSG_QUIZ_LIMIT_SHORT, alert=True)
+    if query.message:
+        await query.message.reply_text(
+            _build_quiz_limit_text(used_today=status.used_today, reset_at=status.next_reset_at),
+            parse_mode="HTML",
+        )
     return False
 
 
@@ -303,22 +312,24 @@ async def _mark_quiz_generation_used(context: ContextTypes.DEFAULT_TYPE, user_id
 async def on_test_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Тест по всем файлам предмета."""
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     if query.data and query.data.startswith(CB_SUB_TEST_MORE):
         try:
             subject_id = int(query.data.removeprefix(CB_SUB_TEST_MORE))
         except ValueError:
-            await query.answer("Не удалось определить предмет.", show_alert=True)
+            await answer_callback(query, "Не удалось определить предмет.", alert=True)
             return
     else:
         subject_id = context.user_data.get(UD_VIEWING_SUBJECT_ID)
-    subject_name = context.user_data.get(UD_VIEWING_SUBJECT_NAME) or "предмет"
 
     if not subject_id:
-        await query.answer("Не удалось определить предмет.", show_alert=True)
+        await answer_callback(query, "Открой предмет ещё раз и нажми «Тест».", alert=True)
         return
     if not await _check_quiz_generation_limit(query, context, uid):
+        return
+
+    if not is_quiz_ai_configured():
+        await answer_callback(query, MSG_QUIZ_AI_UNAVAILABLE, alert=True)
         return
 
     gemini_proxy_key = get_gemini_proxy_api_key()
@@ -327,22 +338,18 @@ async def on_test_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     deepseek_key = get_deepseek_api_key()
     groq_key = get_groq_api_key()
     gemini_key = get_gemini_api_key()
-    if not gemini_proxy_key and not deepseek_key and not groq_key and not gemini_key:
-        await query.answer(
-            "Викторины отключены: задай GEMINI_PROXY_API_KEY или другой AI key в .env.",
-            show_alert=True,
-        )
-        return
 
-    session_factory = context.bot_data.get("session_factory")
-    if not session_factory:
-        await query.answer("База данных недоступна.", show_alert=True)
-        return
+    await answer_callback(query)
 
     status_msg = await query.message.reply_text(
         em("🧠 Готовлю вопросы по материалам... Это займет несколько секунд."),
         parse_mode="HTML",
     )
+
+    session_factory = context.bot_data.get("session_factory")
+    if not session_factory:
+        await status_msg.edit_text(em(MSG_NO_DATABASE), parse_mode="HTML")
+        return
 
     try:
         async with session_factory() as session:
@@ -397,6 +404,17 @@ async def on_test_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         if sent_polls > 0:
             await _mark_quiz_generation_used(context, uid)
+            schedule_track(
+                context,
+                uid,
+                EV_QUIZ_GENERATED,
+                {
+                    "kind": "subject",
+                    "subject_id": subject.id,
+                    "material_id": None,
+                    "question_count": len(questions),
+                },
+            )
     except Exception as e:
         logger.exception("Quiz generation failed: %s", e)
         try:
@@ -408,21 +426,24 @@ async def on_test_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def on_file_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Тест по одному файлу."""
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id
     if query.data and query.data.startswith(CB_FILE_TEST_MORE):
         try:
             material_id = int(query.data.removeprefix(CB_FILE_TEST_MORE))
         except ValueError:
-            await query.answer("Не удалось определить файл.", show_alert=True)
+            await answer_callback(query, "Не удалось определить файл.", alert=True)
             return
     else:
         material_id = context.user_data.get(UD_VIEWING_MATERIAL_ID)
 
     if not material_id:
-        await query.answer("Не удалось определить файл.", show_alert=True)
+        await answer_callback(query, "Открой файл ещё раз и нажми «Тест».", alert=True)
         return
     if not await _check_quiz_generation_limit(query, context, uid):
+        return
+
+    if not is_quiz_ai_configured():
+        await answer_callback(query, MSG_QUIZ_AI_UNAVAILABLE, alert=True)
         return
 
     gemini_proxy_key = get_gemini_proxy_api_key()
@@ -431,22 +452,18 @@ async def on_file_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     deepseek_key = get_deepseek_api_key()
     groq_key = get_groq_api_key()
     gemini_key = get_gemini_api_key()
-    if not gemini_proxy_key and not deepseek_key and not groq_key and not gemini_key:
-        await query.answer(
-            "Викторины отключены: задай GEMINI_PROXY_API_KEY или другой AI key в .env.",
-            show_alert=True,
-        )
-        return
 
-    session_factory = context.bot_data.get("session_factory")
-    if not session_factory:
-        await query.answer("База данных недоступна.", show_alert=True)
-        return
+    await answer_callback(query)
 
     status_msg = await query.message.reply_text(
         em("🧠 Готовлю вопросы по файлу... Это займет несколько секунд."),
         parse_mode="HTML",
     )
+
+    session_factory = context.bot_data.get("session_factory")
+    if not session_factory:
+        await status_msg.edit_text(em(MSG_NO_DATABASE), parse_mode="HTML")
+        return
 
     try:
         async with session_factory() as session:
@@ -506,6 +523,17 @@ async def on_file_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         if sent_polls > 0:
             await _mark_quiz_generation_used(context, uid)
+            schedule_track(
+                context,
+                uid,
+                EV_QUIZ_GENERATED,
+                {
+                    "kind": "file",
+                    "subject_id": material.subject_id,
+                    "material_id": material.id,
+                    "question_count": len(questions),
+                },
+            )
     except Exception as e:
         logger.exception("Quiz generation failed: %s", e)
         try:

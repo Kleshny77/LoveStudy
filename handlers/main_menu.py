@@ -9,6 +9,7 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 from constants import CB_MAIN_DEADLINES, CB_MAIN_MATERIALS, CB_MAIN_PROFILE, CB_MAIN_SUBJECTS, CB_MAT_TO_MAIN, CB_NAV_HUB, CB_NAV_MAIN, CB_NAV_SUBS
 from handlers.subjects import send_subjects_screen
 from services.analytics import EV_OPEN_SCREEN, schedule_track
+from services.callback_feedback import answer_callback
 from services.main_menu import get_main_menu_keyboard, get_main_menu_text, get_materials_hub_keyboard, get_materials_hub_text
 
 logger = logging.getLogger(__name__)
@@ -16,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     uid = update.effective_user.id if update.effective_user else None
 
     if query.data == CB_MAIN_MATERIALS:
         schedule_track(context, uid, EV_OPEN_SCREEN, {"screen": "materials_hub"})
+        await answer_callback(query)
         await query.edit_message_text(
             get_materials_hub_text(),
             reply_markup=get_materials_hub_keyboard(),
@@ -49,7 +50,7 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def go_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    await answer_callback(query)
     name = update.effective_user.first_name if update.effective_user else None
     text = get_main_menu_text(name)
     keyboard = get_main_menu_keyboard()
@@ -74,7 +75,7 @@ async def go_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def go_to_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """← Назад к экрану «Мои предметы» (hub)."""
     query = update.callback_query
-    await query.answer()
+    await answer_callback(query)
     await query.edit_message_text(
         get_materials_hub_text(),
         reply_markup=get_materials_hub_keyboard(),
@@ -85,7 +86,6 @@ async def go_to_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def go_to_subjects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """← Назад к списку предметов."""
     query = update.callback_query
-    await query.answer()
     await send_subjects_screen(update, context)
 
 

@@ -39,6 +39,7 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_provider_charge_id VARCHAR(255)",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_telegram_charge_id VARCHAR(255)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS acquisition_ref VARCHAR(128)",
     # friendships
     """CREATE TABLE IF NOT EXISTS friendships (
         id         BIGSERIAL PRIMARY KEY,

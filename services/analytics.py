@@ -13,11 +13,13 @@ from db.models import AnalyticsEvent
 logger = logging.getLogger(__name__)
 
 # Имена событий — держим стабильными для SQL/Metabase.
+EV_BOT_STARTED = "bot_started"
 EV_MAIN_MENU_SHOWN = "main_menu_shown"
 EV_OPEN_SCREEN = "open_screen"
 EV_MATERIAL_SAVED = "material_saved"
 EV_DEADLINE_CREATED = "deadline_created"
 EV_POMODORO_WORK_DONE = "pomodoro_work_completed"
+EV_QUIZ_GENERATED = "quiz_generated"
 EV_QUIZ_COMPLETED = "quiz_session_completed"
 EV_SUBSCRIPTION_PAID = "subscription_paid"
 

@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 from config import get_subscription_price_stars
+from services.callback_feedback import MSG_NO_DATABASE, answer_callback
 from services.analytics import EV_SUBSCRIPTION_PAID, schedule_track
 from constants import (
     CB_MAIN_PROFILE,
@@ -97,45 +98,57 @@ def _set_period_key(context: ContextTypes.DEFAULT_TYPE, value: str) -> None:
 
 async def open_profile_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         overview = await get_profile_overview(session, uid)
 
     if overview is None:
-        await query.answer("Профиль пока недоступен", show_alert=True)
+        await answer_callback(query, "Не удалось загрузить профиль. Попробуй ещё раз.", alert=True)
         return
 
+    await answer_callback(query)
     await _safe_edit(query, get_profile_hub_text(overview), get_profile_hub_keyboard())
 
 
 async def open_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         status = await get_subscription_status(session, uid)
 
     price_stars = get_subscription_price_stars()
+    await answer_callback(query)
     await _safe_edit(query, get_subscription_text(status, price_stars), get_subscription_keyboard(status))
 
 
 async def open_subscription_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         status = await get_subscription_status(session, uid)
 
+    await answer_callback(query)
     await _safe_edit(query, get_subscription_manage_text(status), get_subscription_manage_keyboard())
 
 
 async def start_subscription_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    await answer_callback(query)
 
     price_stars = get_subscription_price_stars()
     invoice_url = await context.bot.create_invoice_link(
@@ -208,14 +221,21 @@ async def on_successful_payment(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def open_statistics_hub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
+    await answer_callback(query)
     await _render_statistics_hub(query, update.effective_user.id, context)
 
 
 async def _render_statistics_hub(query, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
     period_key = _get_period_key(context)
-    async with context.bot_data["session_factory"]() as session:
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        return
+    async with factory() as session:
         overview = await get_statistics_overview(session, user_id, period_key)
 
     await _safe_edit(query, get_statistics_hub_text(overview), get_statistics_hub_keyboard())
@@ -223,7 +243,7 @@ async def _render_statistics_hub(query, user_id: int, context: ContextTypes.DEFA
 
 async def open_period_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    await answer_callback(query)
 
     period = get_period_window(_get_period_key(context))
     await _safe_edit(
@@ -235,22 +255,30 @@ async def open_period_picker(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def set_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     period_key = query.data[len(CB_PROF_PERIOD_SET):]
     _set_period_key(context, period_key)
+    await answer_callback(query)
     await _render_statistics_hub(query, update.effective_user.id, context)
 
 
 async def open_subjects_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
     period = get_period_window(_get_period_key(context))
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         items = await get_subject_progress_stats(session, uid, period.key)
 
+    await answer_callback(query)
     await _safe_edit(
         query,
         get_subjects_stats_text(items, period.label),
@@ -260,23 +288,27 @@ async def open_subjects_stats(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def open_subject_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     try:
         subject_id = int(query.data[len(CB_PROF_SUBJECT):])
     except ValueError:
-        await query.answer("Не удалось открыть предмет", show_alert=True)
+        await answer_callback(query, "Не удалось открыть предмет", alert=True)
         return
 
     uid = update.effective_user.id
     period = get_period_window(_get_period_key(context))
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         item = await get_subject_detail_stats(session, uid, subject_id, period.key)
 
     if item is None:
-        await query.answer("Предмет не найден", show_alert=True)
+        await answer_callback(query, "Предмет не найден", alert=True)
         return
 
+    await answer_callback(query)
     await _safe_edit(
         query,
         get_subject_detail_text(item, period.label),
@@ -286,13 +318,17 @@ async def open_subject_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def open_deadlines_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
     period = get_period_window(_get_period_key(context))
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         stats = await get_deadline_statistics(session, uid, period.key)
 
+    await answer_callback(query)
     await _safe_edit(
         query,
         get_deadlines_stats_text(stats, period.label),
@@ -302,13 +338,17 @@ async def open_deadlines_stats(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def open_materials_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
     period = get_period_window(_get_period_key(context))
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         stats = await get_materials_statistics(session, uid, period.key)
 
+    await answer_callback(query)
     await _safe_edit(
         query,
         get_materials_stats_text(stats, period.label),
@@ -318,13 +358,17 @@ async def open_materials_stats(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def open_activity_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
+    factory = context.bot_data.get("session_factory")
+    if not factory:
+        await answer_callback(query, MSG_NO_DATABASE, alert=True)
+        return
 
     uid = update.effective_user.id
     period = get_period_window(_get_period_key(context))
-    async with context.bot_data["session_factory"]() as session:
+    async with factory() as session:
         stats = await get_activity_statistics(session, uid, period.key)
 
+    await answer_callback(query)
     await _safe_edit(
         query,
         get_activity_stats_text(stats, period.label),
